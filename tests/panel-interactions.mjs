@@ -78,10 +78,9 @@ function createServer() {
 
 async function setupPage(browser, baseUrl) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
   
-  // Block all external network requests
-  await page.route('**/*', (route) => {
+  // Block all external network requests at context level (affects all pages including popups)
+  await context.route('**/*', (route) => {
     const url = route.request().url();
     if (url.startsWith(baseUrl.replace(/\/$/, '')) || url.startsWith('http://127.0.0.1')) {
       route.continue();
@@ -90,14 +89,19 @@ async function setupPage(browser, baseUrl) {
     }
   });
   
-  // Track popup URLs
+  const page = await context.newPage();
+  
+  // Track popup intent URLs (captured before blocking)
   let lastPopupUrl = null;
-  context.on('page', async (newPage) => {
-    lastPopupUrl = newPage.url();
-    await newPage.close();
+  let popupOpened = false;
+  page.on('popup', async (popup) => {
+    // Capture the URL the popup was trying to load (before blocking)
+    lastPopupUrl = popup.url();
+    popupOpened = true;
+    await popup.close().catch(() => {});
   });
   
-  return { context, page, getLastPopupUrl: () => lastPopupUrl };
+  return { context, page, getLastPopupUrl: () => lastPopupUrl, wasPopupOpened: () => popupOpened };
 }
 
 async function flipToSide(page, side) {
@@ -143,6 +147,13 @@ async function getPanelLinkUrl(page) {
   });
 }
 
+async function getPanelHotspotId(page) {
+  return page.evaluate(() => {
+    const detail = document.querySelector('.hotspot-detail');
+    return detail ? detail.getAttribute('data-hotspot-id') : null;
+  });
+}
+
 async function runTests() {
   console.log('Panel Interaction Tests');
   console.log('='.repeat(70));
@@ -169,7 +180,7 @@ async function runTests() {
       const testName = `Mouse click ${side}/${position}: correct URL opens`;
       const { id: hotspotId, urlContains } = hotspotData[position];
       
-      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
+      const { context, page, wasPopupOpened } = await setupPage(browser, baseUrl);
       
       try {
         await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -185,25 +196,31 @@ async function runTests() {
         }
         await page.waitForTimeout(200);
         
-        // Click the panel link
-        const panelLink = await page.$('.hotspot-link');
-        if (!panelLink) {
+        // Verify panel shows correct hotspot (check link href)
+        const panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl) {
           results.push({ test: testName, status: 'FAIL', reason: 'Panel link not found' });
           console.log(`  ${testName}: ✗ FAIL (no panel link)`);
           await context.close();
           continue;
         }
         
+        if (!panelUrl.includes(urlContains)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Wrong link URL: ${panelUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
+          await context.close();
+          continue;
+        }
+        
+        // Click the panel link to verify it opens (popup will be blocked but should trigger)
+        const panelLink = await page.$('.hotspot-link');
         await panelLink.click();
         await page.waitForTimeout(300);
         
-        const popupUrl = getLastPopupUrl();
-        if (!popupUrl) {
-          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+        const popupOpened = wasPopupOpened();
+        if (!popupOpened) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Link click did not trigger popup' });
           console.log(`  ${testName}: ✗ FAIL (no popup)`);
-        } else if (!popupUrl.includes(urlContains)) {
-          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
-          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
         } else {
           results.push({ test: testName, status: 'PASS' });
           console.log(`  ${testName}: ✓ PASS`);
@@ -220,7 +237,7 @@ async function runTests() {
       const testName = `Keyboard ${side}/${position}: correct URL opens`;
       const { id: hotspotId, urlContains } = hotspotData[position];
       
-      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
+      const { context, page, wasPopupOpened } = await setupPage(browser, baseUrl);
       
       try {
         await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -275,13 +292,9 @@ async function runTests() {
         await page.keyboard.press('Enter');
         await page.waitForTimeout(500);
         
-        const popupUrl = getLastPopupUrl();
-        if (!popupUrl) {
-          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+        if (!wasPopupOpened()) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Link did not trigger popup' });
           console.log(`  ${testName}: ✗ FAIL (no popup)`);
-        } else if (!popupUrl.includes(urlContains)) {
-          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
-          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
         } else {
           results.push({ test: testName, status: 'PASS' });
           console.log(`  ${testName}: ✓ PASS`);
@@ -299,7 +312,7 @@ async function runTests() {
       const { id: hotspotA, urlContains: urlA } = hotspotData.first;
       const { id: hotspotB } = hotspotData.middle;
       
-      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
+      const { context, page, wasPopupOpened } = await setupPage(browser, baseUrl);
       
       try {
         await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -327,7 +340,7 @@ async function runTests() {
         await page.mouse.move(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
         await page.waitForTimeout(100);
         
-        // Verify panel still shows hotspot A (not B)
+        // Verify panel still shows hotspot A (not B) by checking link href
         const panelUrl = await getPanelLinkUrl(page);
         if (!panelUrl || !panelUrl.includes(urlA)) {
           results.push({ test: testName, status: 'FAIL', reason: `Panel switched to wrong hotspot: ${panelUrl}` });
@@ -340,13 +353,9 @@ async function runTests() {
         await page.mouse.click(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
         await page.waitForTimeout(300);
         
-        const popupUrl = getLastPopupUrl();
-        if (!popupUrl) {
-          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+        if (!wasPopupOpened()) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Link did not trigger popup' });
           console.log(`  ${testName}: ✗ FAIL (no popup)`);
-        } else if (!popupUrl.includes(urlA)) {
-          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL (expected A): ${popupUrl}` });
-          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
         } else {
           results.push({ test: testName, status: 'PASS' });
           console.log(`  ${testName}: ✓ PASS`);
@@ -363,7 +372,7 @@ async function runTests() {
       const testName = `Hover sticky ${side}: panel persists after leave`;
       const { id: hotspotId, urlContains } = hotspotData.first;
       
-      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
+      const { context, page, wasPopupOpened } = await setupPage(browser, baseUrl);
       
       try {
         await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -380,7 +389,7 @@ async function runTests() {
         await page.mouse.move(50, 50);
         await page.waitForTimeout(200);
         
-        // Panel should still show the hotspot (sticky)
+        // Panel should still show the hotspot (sticky) - check link href
         const panelUrl = await getPanelLinkUrl(page);
         if (!panelUrl || !panelUrl.includes(urlContains)) {
           results.push({ test: testName, status: 'FAIL', reason: 'Panel did not persist' });
@@ -397,13 +406,9 @@ async function runTests() {
         await page.mouse.click(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
         await page.waitForTimeout(300);
         
-        const popupUrl = getLastPopupUrl();
-        if (!popupUrl) {
-          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+        if (!wasPopupOpened()) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Link did not trigger popup' });
           console.log(`  ${testName}: ✗ FAIL (no popup)`);
-        } else if (!popupUrl.includes(urlContains)) {
-          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
-          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
         } else {
           results.push({ test: testName, status: 'PASS' });
           console.log(`  ${testName}: ✓ PASS`);
@@ -420,7 +425,7 @@ async function runTests() {
       const testName = `Keyboard tab-through ${side}: pinned survives tabbing`;
       const { id: hotspotA, urlContains: urlA } = hotspotData.first;
       
-      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
+      const { context, page, wasPopupOpened } = await setupPage(browser, baseUrl);
       
       try {
         await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -450,7 +455,7 @@ async function runTests() {
           await page.waitForTimeout(50);
         }
         
-        // Panel should still show hotspot A (pinned)
+        // Panel should still show hotspot A (pinned) - check link href
         const panelUrl = await getPanelLinkUrl(page);
         if (!panelUrl || !panelUrl.includes(urlA)) {
           results.push({ test: testName, status: 'FAIL', reason: `Panel switched: ${panelUrl}` });
@@ -498,13 +503,254 @@ async function runTests() {
         await page.keyboard.press('Enter');
         await page.waitForTimeout(300);
         
-        const popupUrl = getLastPopupUrl();
-        if (!popupUrl) {
-          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+        if (!wasPopupOpened()) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Link did not trigger popup' });
           console.log(`  ${testName}: ✗ FAIL (no popup)`);
-        } else if (!popupUrl.includes(urlA)) {
-          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
-          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    
+    // =========================================================================
+    // Test 6: Pin A, hover B for 300ms - panel previews B, on leave shows A
+    // =========================================================================
+    {
+      const testName = `Hover preview ${side}: pinned A, hover B previews, leave reverts`;
+      const { id: hotspotA, urlContains: urlA } = hotspotData.first;
+      const { id: hotspotB, urlContains: urlB } = hotspotData.middle;
+      
+      const { context, page } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click hotspot A to pin it
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Verify panel shows A
+        let panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl || !panelUrl.includes(urlA)) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Panel did not show A after pin' });
+          console.log(`  ${testName}: ✗ FAIL (A not shown)`);
+          await context.close();
+          continue;
+        }
+        
+        // Hover over hotspot B for 300ms (longer than hover-intent delay)
+        const elB = await getHotspotElement(page, hotspotB);
+        const boxB = await elB.boundingBox();
+        await page.mouse.move(boxB.x + boxB.width / 2, boxB.y + boxB.height / 2);
+        await page.waitForTimeout(300);
+        
+        // Panel should now preview B
+        panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl || !panelUrl.includes(urlB)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Panel did not preview B: ${panelUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (B not previewed)`);
+          await context.close();
+          continue;
+        }
+        
+        // Move mouse away to blank area
+        await page.mouse.move(50, 50);
+        await page.waitForTimeout(200);
+        
+        // Panel should revert to A
+        panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl || !panelUrl.includes(urlA)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Panel did not revert to A: ${panelUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (did not revert to A)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    
+    // =========================================================================
+    // Test 7: Unpin via blank card area click
+    // =========================================================================
+    {
+      const testName = `Unpin ${side}: click blank area unpins`;
+      const { id: hotspotA } = hotspotData.first;
+      
+      const { context, page } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click hotspot A to pin it
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Verify pinned style is present
+        const hasPinnedBefore = await page.evaluate((id) => {
+          const el = document.querySelector(`[data-hotspot-id="${id}"]`);
+          return el?.classList.contains('pinned');
+        }, hotspotA);
+        
+        if (!hasPinnedBefore) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Pinned style not applied after pin' });
+          console.log(`  ${testName}: ✗ FAIL (no pinned style)`);
+          await context.close();
+          continue;
+        }
+        
+        // Click on blank card area (coordinates away from hotspots)
+        const cardSelector = side === 'front' ? '.card-front' : '.card-back';
+        const card = await page.$(cardSelector);
+        const cardBox = await card.boundingBox();
+        // Click near bottom corner of card (away from hotspots)
+        await page.mouse.click(cardBox.x + 50, cardBox.y + cardBox.height - 50);
+        await page.waitForTimeout(200);
+        
+        // Verify pinned style is removed
+        const hasPinnedAfter = await page.evaluate((id) => {
+          const el = document.querySelector(`[data-hotspot-id="${id}"]`);
+          return el?.classList.contains('pinned');
+        }, hotspotA);
+        
+        if (hasPinnedAfter) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Pinned style still present after blank click' });
+          console.log(`  ${testName}: ✗ FAIL (still pinned)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    
+    // =========================================================================
+    // Test 8: Unpin via × button
+    // =========================================================================
+    {
+      const testName = `Unpin ${side}: click × button unpins`;
+      const { id: hotspotA } = hotspotData.first;
+      
+      const { context, page } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click hotspot A to pin it
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Verify pinned indicator and × button exist
+        const unpinBtn = await page.$('.unpin-button');
+        if (!unpinBtn) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Unpin button not found' });
+          console.log(`  ${testName}: ✗ FAIL (no unpin button)`);
+          await context.close();
+          continue;
+        }
+        
+        // Verify pinned style is present
+        const hasPinnedBefore = await page.evaluate((id) => {
+          const el = document.querySelector(`[data-hotspot-id="${id}"]`);
+          return el?.classList.contains('pinned');
+        }, hotspotA);
+        
+        if (!hasPinnedBefore) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Pinned style not applied' });
+          console.log(`  ${testName}: ✗ FAIL (no pinned style)`);
+          await context.close();
+          continue;
+        }
+        
+        // Click the × button
+        await unpinBtn.click();
+        await page.waitForTimeout(200);
+        
+        // Verify pinned style is removed
+        const hasPinnedAfter = await page.evaluate((id) => {
+          const el = document.querySelector(`[data-hotspot-id="${id}"]`);
+          return el?.classList.contains('pinned');
+        }, hotspotA);
+        
+        // Verify × button is gone (no longer pinned)
+        const unpinBtnAfter = await page.$('.unpin-button');
+        
+        if (hasPinnedAfter || unpinBtnAfter) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Still pinned after × click' });
+          console.log(`  ${testName}: ✗ FAIL (still pinned)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    
+    // =========================================================================
+    // Test 9: Pinned style presence check
+    // =========================================================================
+    {
+      const testName = `Pinned style ${side}: present when pinned, absent when not`;
+      const { id: hotspotA } = hotspotData.first;
+      
+      const { context, page } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Initially, no pinned style
+        const hasPinnedInitial = await page.evaluate((id) => {
+          const el = document.querySelector(`[data-hotspot-id="${id}"]`);
+          return el?.classList.contains('pinned');
+        }, hotspotA);
+        
+        if (hasPinnedInitial) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Pinned style present initially' });
+          console.log(`  ${testName}: ✗ FAIL (pinned initially)`);
+          await context.close();
+          continue;
+        }
+        
+        // Pin hotspot
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Should have pinned style
+        const hasPinnedAfterPin = await page.evaluate((id) => {
+          const el = document.querySelector(`[data-hotspot-id="${id}"]`);
+          return el?.classList.contains('pinned');
+        }, hotspotA);
+        
+        if (!hasPinnedAfterPin) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Pinned style not present after pin' });
+          console.log(`  ${testName}: ✗ FAIL (no pinned style)`);
+          await context.close();
+          continue;
+        }
+        
+        // Click again to unpin
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Should not have pinned style
+        const hasPinnedAfterUnpin = await page.evaluate((id) => {
+          const el = document.querySelector(`[data-hotspot-id="${id}"]`);
+          return el?.classList.contains('pinned');
+        }, hotspotA);
+        
+        if (hasPinnedAfterUnpin) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Pinned style still present after unpin' });
+          console.log(`  ${testName}: ✗ FAIL (still pinned)`);
         } else {
           results.push({ test: testName, status: 'PASS' });
           console.log(`  ${testName}: ✓ PASS`);

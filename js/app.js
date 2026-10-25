@@ -345,11 +345,10 @@
     if (state.isFlipping) return;
     if (hotspot.side !== state.currentSide) return;
     
-    // Always show visual highlight immediately
-    highlightHotspot(hotspot.id);
+    // Always show visual highlight immediately (keeping pinned style if applicable)
+    updateHotspotHighlights(hotspot.id);
     
-    // If this hotspot is already pinned or displayed, nothing more to do
-    if (state.pinnedHotspot && state.pinnedHotspot.id === hotspot.id) return;
+    // If this hotspot is already displayed, nothing more to do for panel
     if (state.displayedHotspot && state.displayedHotspot.id === hotspot.id) return;
     
     // Clear any pending hover-intent timer
@@ -358,25 +357,22 @@
       state.hoverIntentTimer = null;
     }
     
-    // For keyboard focus, update preview immediately (no delay)
-    // For mouse hover, use hover-intent delay
+    // For keyboard focus while pinned, don't update panel (user is just tabbing through)
+    // For keyboard focus without pin, update panel immediately
     if (isKeyboardFocus) {
       state.previewHotspot = hotspot;
-      // Only update panel if nothing is pinned
       if (!state.pinnedHotspot) {
         state.displayedHotspot = hotspot;
         updateCuratorPanel(hotspot);
       }
     } else {
-      // Mouse hover: delay panel update to avoid sweep-through issues
+      // Mouse hover: delay panel update to allow hover preview even when pinned
       state.hoverIntentTimer = setTimeout(() => {
         state.hoverIntentTimer = null;
         state.previewHotspot = hotspot;
-        // Only update panel if nothing is pinned
-        if (!state.pinnedHotspot) {
-          state.displayedHotspot = hotspot;
-          updateCuratorPanel(hotspot);
-        }
+        // Update panel to preview this hotspot (even if something else is pinned)
+        state.displayedHotspot = hotspot;
+        updateCuratorPanel(hotspot);
       }, HOVER_INTENT_DELAY);
     }
   }
@@ -392,22 +388,24 @@
     // Check if focus/mouse is moving into the curator panel
     const relatedTarget = e.relatedTarget;
     if (relatedTarget && curatorContent.contains(relatedTarget)) {
-      // Moving into panel - if we have a pinned hotspot, ensure panel shows it
+      // Moving into panel - if we have a pinned hotspot, revert panel to it
       if (state.pinnedHotspot && state.displayedHotspot?.id !== state.pinnedHotspot.id) {
         state.displayedHotspot = state.pinnedHotspot;
         updateCuratorPanel(state.pinnedHotspot);
       }
       state.previewHotspot = null;
+      // Clear hover highlight but keep pinned highlight
+      updateHotspotHighlights(state.pinnedHotspot?.id || null);
       return;
     }
     
     // Clear preview state
     state.previewHotspot = null;
     
-    // Update visual highlight
+    // Update visual highlight and panel
     if (state.pinnedHotspot) {
       // Revert to pinned hotspot highlight and panel
-      highlightHotspot(state.pinnedHotspot.id);
+      updateHotspotHighlights(state.pinnedHotspot.id);
       if (state.displayedHotspot?.id !== state.pinnedHotspot.id) {
         state.displayedHotspot = state.pinnedHotspot;
         updateCuratorPanel(state.pinnedHotspot);
@@ -436,10 +434,7 @@
     // Toggle pin if clicking same hotspot again
     if (state.pinnedHotspot && state.pinnedHotspot.id === hotspot.id) {
       // Unpin - but keep it displayed (sticky)
-      state.pinnedHotspot = null;
-      state.previewHotspot = null;
-      // Keep displaying but remove "pinned" visual state
-      clearHighlights();
+      unpinHotspot();
       return;
     }
     
@@ -448,6 +443,7 @@
     state.previewHotspot = null;
     state.displayedHotspot = hotspot;
     updateCuratorPanel(hotspot);
+    updatePinnedStyle();
     highlightHotspot(hotspot.id);
     
     // For keyboard activation, move focus into the panel
@@ -461,19 +457,60 @@
       }, 50);
     }
   }
-
-  function highlightHotspot(id) {
-    clearHighlights();
-    const polygon = document.querySelector(`[data-hotspot-id="${id}"]`);
-    if (polygon) {
-      polygon.classList.add('active');
+  
+  // Unpin the current hotspot but keep it displayed
+  function unpinHotspot() {
+    if (!state.pinnedHotspot) return;
+    
+    state.pinnedHotspot = null;
+    state.previewHotspot = null;
+    updatePinnedStyle();
+    // Re-render panel without pinned indicator
+    if (state.displayedHotspot) {
+      updateCuratorPanel(state.displayedHotspot);
     }
+    clearHighlights();
   }
 
-  function clearHighlights() {
+  // Update visual highlights - pinned gets .pinned, hovered gets .active
+  function updateHotspotHighlights(hoveredId = null) {
+    // Clear all active (hover) highlights
     document.querySelectorAll('.hotspot-polygon.active').forEach(p => {
       p.classList.remove('active');
     });
+    
+    // Apply hover highlight to hovered hotspot (if any)
+    if (hoveredId) {
+      const hoveredEl = document.querySelector(`[data-hotspot-id="${hoveredId}"]`);
+      if (hoveredEl) {
+        hoveredEl.classList.add('active');
+      }
+    }
+    
+    // Pinned style is managed separately by updatePinnedStyle()
+  }
+  
+  function updatePinnedStyle() {
+    // Clear all pinned styles
+    document.querySelectorAll('.hotspot-polygon.pinned').forEach(p => {
+      p.classList.remove('pinned');
+    });
+    
+    // Apply pinned style to pinned hotspot (if any)
+    if (state.pinnedHotspot) {
+      const pinnedEl = document.querySelector(`[data-hotspot-id="${state.pinnedHotspot.id}"]`);
+      if (pinnedEl) {
+        pinnedEl.classList.add('pinned');
+      }
+    }
+  }
+
+  function highlightHotspot(id) {
+    updateHotspotHighlights(id);
+  }
+
+  function clearHighlights() {
+    updateHotspotHighlights(null);
   }
   
   function resetPanel() {
@@ -487,15 +524,27 @@
     state.previewHotspot = null;
     state.displayedHotspot = null;
     state.lastFocusedHotspotEl = null;
+    updatePinnedStyle();
     showPlaceholder();
     clearHighlights();
   }
 
   // ===== CURATOR PANEL =====
   function updateCuratorPanel(hotspot) {
+    const isPinned = state.pinnedHotspot && state.pinnedHotspot.id === hotspot.id;
+    const pinnedIndicator = isPinned ? `
+      <span class="pinned-indicator">
+        Pinned
+        <button type="button" class="unpin-button" aria-label="Unpin this hotspot">×</button>
+      </span>
+    ` : '';
+    
     curatorContent.innerHTML = `
-      <div class="hotspot-detail">
-        <h3>${escapeHtml(hotspot.title)}</h3>
+      <div class="hotspot-detail" data-hotspot-id="${escapeHtml(hotspot.id)}">
+        <div class="hotspot-header">
+          <h3>${escapeHtml(hotspot.title)}</h3>
+          ${pinnedIndicator}
+        </div>
         <div class="hotspot-narrative">
           ${hotspot.narrative}
         </div>
@@ -507,6 +556,15 @@
         </a>
       </div>
     `;
+    
+    // Add click handler for unpin button
+    const unpinBtn = curatorContent.querySelector('.unpin-button');
+    if (unpinBtn) {
+      unpinBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        unpinHotspot();
+      });
+    }
   }
 
   function showPlaceholder() {
@@ -799,11 +857,36 @@
   function setupEventListeners() {
     setupFlipButton();
     setupContactModal();
+    setupCardAreaClick();
 
     // Handle window resize
     window.addEventListener('resize', debounce(() => {
       scaleReverseContent();
     }, 100));
+  }
+  
+  // Click on blank card area unpins the current hotspot
+  function setupCardAreaClick() {
+    const cardFront = document.querySelector('.card-front');
+    const cardBack = document.querySelector('.card-back');
+    
+    // Handler that unpins if click is on blank area (not a hotspot)
+    function handleCardClick(e) {
+      // Don't unpin if clicking on a hotspot polygon
+      if (e.target.closest('.hotspot-polygon')) return;
+      // Don't unpin if clicking on reverse text spans with data-hotspot
+      if (e.target.closest('[data-hotspot]')) return;
+      // Don't unpin if in edit mode
+      if (state.editMode) return;
+      
+      // Unpin if something is pinned
+      if (state.pinnedHotspot) {
+        unpinHotspot();
+      }
+    }
+    
+    cardFront.addEventListener('click', handleCardClick);
+    cardBack.addEventListener('click', handleCardClick);
   }
 
   // ===== START APPLICATION =====
