@@ -9,6 +9,13 @@
   // ===== CONFIGURATION =====
   // Contact email address - change this to your actual email
   const CONTACT_EMAIL = 'curator@example.com';
+  
+  // Padding around dynamically computed hotspot polygons (pixels in viewBox space)
+  const HOTSPOT_PADDING = 3;
+  
+  // ViewBox dimensions for coordinate conversion
+  const VIEWBOX_WIDTH = 807;
+  const VIEWBOX_HEIGHT = 1024;
 
   // ===== STATE =====
   const state = {
@@ -17,7 +24,8 @@
     isFlipping: false,
     editMode: false,
     editPoints: [],
-    modalOpen: false
+    modalOpen: false,
+    dynamicPolygonsReady: false
   };
 
   // ===== DOM REFERENCES =====
@@ -45,7 +53,7 @@
     // Initialize reverse side scaling
     initReverseScaling();
     
-    // Initialize hotspots
+    // Initial render with static fallback polygons
     renderHotspots();
     
     // Set initial visibility (hide back hotspots from tab order)
@@ -61,6 +69,9 @@
 
     // Show initial placeholder
     showPlaceholder();
+    
+    // Initialize dynamic polygon computation after fonts load
+    initDynamicPolygons();
   }
 
   // ===== REVERSE SIDE SCALING =====
@@ -76,8 +87,8 @@
     if (!reverseContent || !reverseWrapper) return;
     
     const wrapperRect = reverseWrapper.getBoundingClientRect();
-    const contentWidth = 807;
-    const contentHeight = 1024;
+    const contentWidth = VIEWBOX_WIDTH;
+    const contentHeight = VIEWBOX_HEIGHT;
     
     // Calculate scale to fit
     const scaleX = wrapperRect.width / contentWidth;
@@ -85,6 +96,125 @@
     const scale = Math.min(scaleX, scaleY);
     
     reverseContent.style.transform = `scale(${scale})`;
+  }
+  
+  // ===== DYNAMIC POLYGON COMPUTATION =====
+  // Computes hotspot polygons at runtime from actual text positions
+  // This ensures hotspots align regardless of which font renders
+  
+  function initDynamicPolygons() {
+    // Compute after fonts are ready
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => {
+        computeDynamicPolygons();
+      });
+    } else {
+      // Fallback for browsers without FontFaceSet API
+      setTimeout(computeDynamicPolygons, 100);
+    }
+    
+    // Recompute when fonts finish loading (catches late-loading fonts)
+    if (document.fonts) {
+      document.fonts.addEventListener('loadingdone', () => {
+        computeDynamicPolygons();
+      });
+    }
+    
+    // Recompute on resize (debounced)
+    window.addEventListener('resize', debounce(computeDynamicPolygons, 150));
+  }
+  
+  function computeDynamicPolygons() {
+    // Only compute for reverse-side hotspots (front side uses static image coordinates)
+    const reverseHotspots = hotspots.filter(h => h.side === 'reverse');
+    
+    reverseHotspots.forEach(hotspot => {
+      const polygon = computePolygonFromTextSpan(hotspot.id);
+      if (polygon && polygon.length >= 3) {
+        updateHotspotPolygon(hotspot.id, polygon);
+      }
+    });
+    
+    state.dynamicPolygonsReady = true;
+  }
+  
+  function computePolygonFromTextSpan(hotspotId) {
+    // Find the text span with data-hotspot attribute
+    const span = document.querySelector(`[data-hotspot="${hotspotId}"]`);
+    if (!span || !reverseContent) return null;
+    
+    // Get all client rects (handles multi-line text)
+    const rects = span.getClientRects();
+    if (rects.length === 0) return null;
+    
+    // Get the reverse content container rect for coordinate conversion
+    const containerRect = reverseContent.getBoundingClientRect();
+    
+    // Get the current scale factor
+    const transform = getComputedStyle(reverseContent).transform;
+    let scale = 1;
+    if (transform && transform !== 'none') {
+      const match = transform.match(/matrix\(([^,]+)/);
+      if (match) scale = parseFloat(match[1]);
+    }
+    
+    // Collect all rect bounds in viewBox coordinates
+    const allBounds = [];
+    for (const rect of rects) {
+      // Convert from screen coordinates to 807x1024 viewBox coordinates
+      const left = (rect.left - containerRect.left) / scale;
+      const right = (rect.right - containerRect.left) / scale;
+      const top = (rect.top - containerRect.top) / scale;
+      const bottom = (rect.bottom - containerRect.top) / scale;
+      
+      allBounds.push({ left, right, top, bottom });
+    }
+    
+    // Build polygon covering all rects with padding
+    // For single-line text: simple rectangle
+    // For multi-line text: create a polygon covering all lines
+    
+    if (allBounds.length === 1) {
+      // Single line - create a padded rectangle
+      const b = allBounds[0];
+      return [
+        [Math.round(b.left - HOTSPOT_PADDING), Math.round(b.top - HOTSPOT_PADDING)],
+        [Math.round(b.right + HOTSPOT_PADDING), Math.round(b.top - HOTSPOT_PADDING)],
+        [Math.round(b.right + HOTSPOT_PADDING), Math.round(b.bottom + HOTSPOT_PADDING)],
+        [Math.round(b.left - HOTSPOT_PADDING), Math.round(b.bottom + HOTSPOT_PADDING)]
+      ];
+    }
+    
+    // Multi-line text - create a polygon that covers all lines
+    // Sort by vertical position
+    allBounds.sort((a, b) => a.top - b.top);
+    
+    // Build a complex polygon: go down the left side, then up the right side
+    const polygon = [];
+    
+    // Left side (top to bottom)
+    for (const b of allBounds) {
+      polygon.push([Math.round(b.left - HOTSPOT_PADDING), Math.round(b.top - HOTSPOT_PADDING)]);
+      polygon.push([Math.round(b.left - HOTSPOT_PADDING), Math.round(b.bottom + HOTSPOT_PADDING)]);
+    }
+    
+    // Right side (bottom to top)
+    for (let i = allBounds.length - 1; i >= 0; i--) {
+      const b = allBounds[i];
+      polygon.push([Math.round(b.right + HOTSPOT_PADDING), Math.round(b.bottom + HOTSPOT_PADDING)]);
+      polygon.push([Math.round(b.right + HOTSPOT_PADDING), Math.round(b.top - HOTSPOT_PADDING)]);
+    }
+    
+    return polygon;
+  }
+  
+  function updateHotspotPolygon(hotspotId, polygon) {
+    const polygonEl = backOverlay.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+    if (!polygonEl) return;
+    
+    // Convert polygon array to SVG points string
+    const points = polygon.map(p => p.join(',')).join(' ');
+    polygonEl.setAttribute('points', points);
   }
 
   // ===== HOTSPOT RENDERING =====
@@ -284,6 +414,8 @@
       // Re-scale reverse content after flip
       if (state.currentSide === 'reverse') {
         scaleReverseContent();
+        // Recompute dynamic polygons when reverse side becomes visible
+        computeDynamicPolygons();
       }
     }, delay);
   }

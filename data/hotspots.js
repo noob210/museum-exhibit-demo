@@ -13,21 +13,23 @@
  * COORDINATE SYSTEM:
  * - Front side viewBox: 807 x 1024 (matches image dimensions)
  * - Reverse side viewBox: 807 x 1024 (matches card dimensions)
- * - Reverse side text and SVG are locked to this coordinate space and scale together
  * 
- * POLYGON VERIFICATION:
- * All 11 reverse hotspots verified at 1440, 1024, 768, and 390px viewports
- * with both Google Fonts and fallback fonts. Each achieves:
- * - 100% coverage of target text
- * - Maximum 3px edge offset (within 5px tolerance)
- * - No overlap with neighboring hotspots
+ * DYNAMIC vs STATIC POLYGONS:
+ * - Front side hotspots use STATIC polygons (fixed image coordinates)
+ * - Reverse side hotspots use DYNAMIC polygons computed at runtime from actual
+ *   text positions via getClientRects(). This ensures hotspots align correctly
+ *   regardless of which font renders (self-hosted, fallback, Times, Georgia, etc.)
+ * - The static polygon coordinates below serve as FALLBACK for initial paint
+ *   and for cases where JS measurement fails
+ * - Dynamic computation runs after: document.fonts.ready, resize, loadingdone, flip
  * 
  * TO ADD A NEW HOTSPOT:
  * 1. Enable edit mode by adding ?edit=1 to the URL
  * 2. Click points on the image to log coordinates to the console
  * 3. Press 'C' to copy the polygon array, 'R' to reset points
  * 4. Add a new entry to the hotspots array below with the coordinates
- * 5. Test the hotspot placement and adjust as needed
+ * 5. For reverse-side hotspots, add a data-hotspot="id" attribute to the text span
+ *    in index.html - the polygon will be computed dynamically from that span
  */
 
 const hotspots = [
