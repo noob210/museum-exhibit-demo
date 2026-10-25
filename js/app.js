@@ -103,28 +103,39 @@
   // This ensures hotspots align regardless of which font renders
   
   function initDynamicPolygons() {
-    // Compute after fonts are ready
+    // Compute after fonts are ready, but only if reverse is visible
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(() => {
-        computeDynamicPolygons();
+        if (state.currentSide === 'reverse') {
+          computeDynamicPolygons();
+        }
       });
-    } else {
-      // Fallback for browsers without FontFaceSet API
-      setTimeout(computeDynamicPolygons, 100);
     }
     
     // Recompute when fonts finish loading (catches late-loading fonts)
     if (document.fonts) {
       document.fonts.addEventListener('loadingdone', () => {
-        computeDynamicPolygons();
+        if (state.currentSide === 'reverse') {
+          computeDynamicPolygons();
+        }
       });
     }
     
-    // Recompute on resize (debounced)
-    window.addEventListener('resize', debounce(computeDynamicPolygons, 150));
+    // Recompute on resize (debounced), only if reverse is visible
+    window.addEventListener('resize', debounce(() => {
+      if (state.currentSide === 'reverse') {
+        computeDynamicPolygons();
+      }
+    }, 150));
   }
   
   function computeDynamicPolygons() {
+    // Only compute when reverse side is visible to ensure accurate measurements
+    // (text must be rendered without 180° rotation to get correct coordinates)
+    if (state.currentSide !== 'reverse') {
+      return;
+    }
+    
     // Only compute for reverse-side hotspots (front side uses static image coordinates)
     const reverseHotspots = hotspots.filter(h => h.side === 'reverse');
     

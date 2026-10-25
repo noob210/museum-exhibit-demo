@@ -10,17 +10,22 @@
  * 1. Self-hosted (default) - loads fonts/crimson-pro-latin.woff2
  * 2. Fonts blocked - blocks all font loading, uses system fallback
  * 3. Times forced - forces font-family to Times New Roman
- * 4. Georgia forced - forces font-family to Georgia
+ * 4. DejaVu Serif forced - forces font-family to DejaVu Serif (installed in test env)
  * 
- * Viewports tested: 1440px, 1024px, 768px, 390px, plus 200% zoom at 1440px
+ * Viewports tested: 1440px, 1024px, 768px, 390px, plus 720px at 200% zoom (deviceScaleFactor 2)
+ * 
+ * All offset measurements are in viewBox units (807x1024 coordinate space).
  */
 
 import { chromium } from 'playwright';
+import http from 'http';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const htmlPath = `file://${path.resolve(__dirname, '../index.html')}`;
+const ROOT_DIR = path.resolve(__dirname, '..');
+const BASE_PATH = '/museum-exhibit-demo';
 
 // Hotspot IDs to verify (reverse side only)
 const HOTSPOT_IDS = [
@@ -39,23 +44,67 @@ const HOTSPOT_IDS = [
 
 // Test configurations
 const VIEWPORTS = [
-  { width: 1440, height: 900, zoom: 1, name: '1440px' },
-  { width: 1024, height: 768, zoom: 1, name: '1024px' },
-  { width: 768, height: 1024, zoom: 1, name: '768px' },
-  { width: 390, height: 844, zoom: 1, name: '390px' },
-  { width: 1440, height: 900, zoom: 2, name: '1440px@200%' }
+  { width: 1440, height: 900, deviceScaleFactor: 1, name: '1440px' },
+  { width: 1024, height: 768, deviceScaleFactor: 1, name: '1024px' },
+  { width: 768, height: 1024, deviceScaleFactor: 1, name: '768px' },
+  { width: 390, height: 844, deviceScaleFactor: 1, name: '390px' },
+  { width: 720, height: 450, deviceScaleFactor: 2, name: '720px@200%' }
 ];
 
 const FONT_CONDITIONS = [
   { name: 'self-hosted', blockFonts: false, forcedFont: null },
   { name: 'fonts-blocked', blockFonts: true, forcedFont: null },
   { name: 'times-forced', blockFonts: false, forcedFont: 'Times New Roman' },
-  { name: 'georgia-forced', blockFonts: false, forcedFont: 'Georgia' }
+  { name: 'dejavu-forced', blockFonts: false, forcedFont: 'DejaVu Serif' }
 ];
 
 // Thresholds
 const MIN_COVERAGE = 90;
 const MAX_OFFSET = 5;
+
+// Simple static file server
+function createServer() {
+  return new Promise((resolve) => {
+    const mimeTypes = {
+      '.html': 'text/html',
+      '.css': 'text/css',
+      '.js': 'application/javascript',
+      '.woff2': 'font/woff2',
+      '.jpg': 'image/jpeg',
+      '.png': 'image/png',
+      '.svg': 'image/svg+xml',
+      '.txt': 'text/plain'
+    };
+
+    const server = http.createServer((req, res) => {
+      let urlPath = req.url.split('?')[0];
+      
+      // Strip base path
+      if (urlPath.startsWith(BASE_PATH)) {
+        urlPath = urlPath.slice(BASE_PATH.length) || '/';
+      }
+      
+      let filePath = path.join(ROOT_DIR, urlPath === '/' ? 'index.html' : urlPath);
+      
+      if (!fs.existsSync(filePath)) {
+        res.writeHead(404);
+        res.end('Not found');
+        return;
+      }
+      
+      const ext = path.extname(filePath);
+      const contentType = mimeTypes[ext] || 'application/octet-stream';
+      
+      res.writeHead(200, { 'Content-Type': contentType });
+      fs.createReadStream(filePath).pipe(res);
+    });
+
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      resolve({ server, port });
+    });
+  });
+}
 
 async function measureHotspot(page, hotspotId) {
   return page.evaluate(({ id }) => {
@@ -133,7 +182,7 @@ async function measureHotspot(page, hotspotId) {
     // Calculate coverage (intersection / text area)
     const coverage = textArea > 0 ? (intersectionArea / textArea) * 100 : 0;
     
-    // Calculate edge offsets
+    // Calculate edge offsets (in viewBox units)
     const leftOffset = Math.abs(textLeft - polyLeft);
     const rightOffset = Math.abs(textRight - polyRight);
     const topOffset = Math.abs(textTop - polyTop);
@@ -148,38 +197,62 @@ async function measureHotspot(page, hotspotId) {
         right: Math.round(rightOffset * 10) / 10,
         top: Math.round(topOffset * 10) / 10,
         bottom: Math.round(bottomOffset * 10) / 10
-      },
-      textBounds: { left: textLeft, right: textRight, top: textTop, bottom: textBottom },
-      polyBounds: { left: polyLeft, right: polyRight, top: polyTop, bottom: polyBottom }
+      }
     };
   }, { id: hotspotId });
 }
 
-async function runTest(browser, viewport, fontCondition) {
+async function runTest(browser, baseUrl, viewport, fontCondition) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
-    deviceScaleFactor: viewport.zoom
+    deviceScaleFactor: viewport.deviceScaleFactor
   });
   
   const page = await context.newPage();
+  
+  // Track errors - attach listeners BEFORE navigation
+  const errors = [];
+  const failedRequests = [];
+  
+  page.on('console', msg => {
+    if (msg.type() === 'error') {
+      const text = msg.text();
+      // Ignore font loading errors when we're intentionally blocking fonts
+      if (fontCondition.blockFonts && text.includes('Failed to load resource')) {
+        return;
+      }
+      errors.push(text);
+    }
+  });
+  
+  page.on('pageerror', err => {
+    errors.push(err.message);
+  });
+  
+  page.on('requestfailed', request => {
+    const url = request.url();
+    // Ignore font request failures when we're intentionally blocking fonts
+    if (fontCondition.blockFonts && (url.endsWith('.woff2') || url.endsWith('.woff') || url.endsWith('.ttf'))) {
+      return;
+    }
+    failedRequests.push(`${request.method()} ${url}: ${request.failure()?.errorText || 'unknown'}`);
+  });
   
   // Block fonts if needed
   if (fontCondition.blockFonts) {
     await page.route('**/*.woff2', route => route.abort());
     await page.route('**/*.woff', route => route.abort());
     await page.route('**/*.ttf', route => route.abort());
-    await page.route('**/fonts.googleapis.com/**', route => route.abort());
-    await page.route('**/fonts.gstatic.com/**', route => route.abort());
   }
   
   // Navigate to page
-  await page.goto(htmlPath, { waitUntil: 'networkidle' });
+  await page.goto(`${baseUrl}${BASE_PATH}/`, { waitUntil: 'networkidle' });
   
   // Force font if needed
   if (fontCondition.forcedFont) {
     await page.addStyleTag({
       content: `
-        * {
+        .card-reverse-content, .card-reverse-content * {
           font-family: '${fontCondition.forcedFont}', serif !important;
         }
       `
@@ -187,14 +260,14 @@ async function runTest(browser, viewport, fontCondition) {
   }
   
   // Wait for fonts to load (or fail)
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
   
   // Click flip button to show reverse side
   await page.click('#flip-button');
   await page.waitForTimeout(1000);
   
   // Wait for dynamic polygons to compute
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(200);
   
   // Measure each hotspot
   const results = [];
@@ -206,24 +279,21 @@ async function runTest(browser, viewport, fontCondition) {
     });
   }
   
-  // Check for console errors
-  const consoleErrors = [];
-  page.on('console', msg => {
-    if (msg.type() === 'error') {
-      consoleErrors.push(msg.text());
-    }
-  });
-  
   await context.close();
   
-  return { results, consoleErrors };
+  return { results, errors, failedRequests };
 }
 
 async function main() {
   console.log('Hotspot Verification Test');
   console.log('='.repeat(80));
   console.log(`Testing ${HOTSPOT_IDS.length} hotspots × ${VIEWPORTS.length} viewports × ${FONT_CONDITIONS.length} font conditions`);
-  console.log(`Thresholds: ≥${MIN_COVERAGE}% coverage, ≤${MAX_OFFSET}px max offset\n`);
+  console.log(`Thresholds: ≥${MIN_COVERAGE}% coverage, ≤${MAX_OFFSET} viewBox units max offset\n`);
+  
+  // Start HTTP server
+  const { server, port } = await createServer();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  console.log(`Server running at ${baseUrl}${BASE_PATH}/\n`);
   
   const browser = await chromium.launch({ headless: true });
   
@@ -231,6 +301,7 @@ async function main() {
   let totalTests = 0;
   let passedTests = 0;
   let failedTests = 0;
+  let hasErrors = false;
   
   for (const fontCondition of FONT_CONDITIONS) {
     console.log(`\n${'─'.repeat(80)}`);
@@ -240,11 +311,22 @@ async function main() {
     for (const viewport of VIEWPORTS) {
       console.log(`\n  Viewport: ${viewport.name}`);
       
-      const { results, consoleErrors } = await runTest(browser, viewport, fontCondition);
+      const { results, errors, failedRequests } = await runTest(browser, baseUrl, viewport, fontCondition);
+      
+      // Check for errors
+      if (errors.length > 0 || failedRequests.length > 0) {
+        hasErrors = true;
+        if (errors.length > 0) {
+          console.log(`  ⚠ Console errors: ${errors.join(', ')}`);
+        }
+        if (failedRequests.length > 0) {
+          console.log(`  ⚠ Failed requests: ${failedRequests.join(', ')}`);
+        }
+      }
       
       console.log('  ' + '─'.repeat(76));
-      console.log('  | Hotspot ID         | Coverage | Max Offset | Status |');
-      console.log('  |' + '─'.repeat(20) + '|' + '─'.repeat(10) + '|' + '─'.repeat(12) + '|' + '─'.repeat(8) + '|');
+      console.log('  | Hotspot ID         | Coverage | Max Offset (vb) | Status |');
+      console.log('  |' + '─'.repeat(20) + '|' + '─'.repeat(10) + '|' + '─'.repeat(17) + '|' + '─'.repeat(8) + '|');
       
       for (const result of results) {
         totalTests++;
@@ -273,7 +355,7 @@ async function main() {
         }
         
         const status = passed ? '✓ PASS' : '✗ FAIL';
-        console.log(`  | ${result.id.padEnd(18)} | ${String(result.coverage).padStart(6)}% | ${String(result.maxOffset).padStart(8)}px | ${status} |`);
+        console.log(`  | ${result.id.padEnd(18)} | ${String(result.coverage).padStart(6)}% | ${String(result.maxOffset).padStart(13)} vb | ${status} |`);
         
         allResults.push({
           font: fontCondition.name,
@@ -285,14 +367,11 @@ async function main() {
           status: passed ? 'PASS' : 'FAIL'
         });
       }
-      
-      if (consoleErrors.length > 0) {
-        console.log(`  Console errors: ${consoleErrors.length}`);
-      }
     }
   }
   
   await browser.close();
+  server.close();
   
   // Summary
   console.log('\n' + '='.repeat(80));
@@ -311,7 +390,7 @@ async function main() {
       if (f.error) {
         console.log(`  - ${f.font} / ${f.viewport} / ${f.hotspot}: ${f.error}`);
       } else {
-        console.log(`  - ${f.font} / ${f.viewport} / ${f.hotspot}: ${f.coverage}% coverage, ${f.maxOffset}px offset`);
+        console.log(`  - ${f.font} / ${f.viewport} / ${f.hotspot}: ${f.coverage}% coverage, ${f.maxOffset} vb offset`);
       }
     }
   }
@@ -320,13 +399,13 @@ async function main() {
   console.log('\n' + '─'.repeat(80));
   console.log('Per-hotspot worst case (across all viewports and font conditions):');
   console.log('─'.repeat(80));
-  console.log('| Hotspot ID         | Min Coverage | Max Offset | Status |');
-  console.log('|' + '─'.repeat(20) + '|' + '─'.repeat(14) + '|' + '─'.repeat(12) + '|' + '─'.repeat(8) + '|');
+  console.log('| Hotspot ID         | Min Coverage | Max Offset (vb) | Status |');
+  console.log('|' + '─'.repeat(20) + '|' + '─'.repeat(14) + '|' + '─'.repeat(17) + '|' + '─'.repeat(8) + '|');
   
   for (const id of HOTSPOT_IDS) {
     const hotspotResults = allResults.filter(r => r.hotspot === id && !r.error);
     if (hotspotResults.length === 0) {
-      console.log(`| ${id.padEnd(18)} | ERROR        |            |        |`);
+      console.log(`| ${id.padEnd(18)} | ERROR        |                 |        |`);
       continue;
     }
     
@@ -335,11 +414,17 @@ async function main() {
     const passed = minCoverage >= MIN_COVERAGE && maxOffset <= MAX_OFFSET;
     const status = passed ? '✓ PASS' : '✗ FAIL';
     
-    console.log(`| ${id.padEnd(18)} | ${String(minCoverage).padStart(10)}% | ${String(maxOffset).padStart(8)}px | ${status} |`);
+    console.log(`| ${id.padEnd(18)} | ${String(minCoverage).padStart(10)}% | ${String(maxOffset).padStart(13)} vb | ${status} |`);
   }
   
-  // Exit with appropriate code
-  process.exit(failedTests > 0 ? 1 : 0);
+  // Exit with error if any test failed or had errors
+  if (failedTests > 0 || hasErrors) {
+    console.log('\n⚠ Test suite completed with failures or errors');
+    process.exit(1);
+  }
+  
+  console.log('\n✓ All tests passed');
+  process.exit(0);
 }
 
 main().catch(err => {
