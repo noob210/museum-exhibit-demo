@@ -462,14 +462,99 @@
   function unpinHotspot() {
     if (!state.pinnedHotspot) return;
     
+    // Remember the hotspot element to focus
+    const hotspotToFocus = document.querySelector(`[data-hotspot-id="${state.pinnedHotspot.id}"]`);
+    
     state.pinnedHotspot = null;
     state.previewHotspot = null;
     updatePinnedStyle();
-    // Re-render panel without pinned indicator
-    if (state.displayedHotspot) {
-      updateCuratorPanel(state.displayedHotspot);
-    }
+    
+    // Update just the indicator without rebuilding the panel
+    updatePanelIndicator();
+    
     clearHighlights();
+    
+    // Move focus to the hotspot, or to the panel link if hotspot not visible
+    if (hotspotToFocus && isElementVisible(hotspotToFocus)) {
+      hotspotToFocus.focus();
+    } else {
+      const panelLink = curatorContent.querySelector('.hotspot-link');
+      if (panelLink) {
+        panelLink.focus();
+      }
+    }
+  }
+  
+  // Check if element is in the visible viewport
+  function isElementVisible(el) {
+    const rect = el.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= window.innerHeight &&
+           rect.left >= 0 && rect.right <= window.innerWidth;
+  }
+  
+  // Update just the indicator in the panel header without rebuilding
+  function updatePanelIndicator() {
+    const header = curatorContent.querySelector('.hotspot-header');
+    if (!header) return;
+    
+    // Remove existing indicator
+    const existingIndicator = header.querySelector('.pinned-indicator, .preview-indicator');
+    if (existingIndicator) {
+      existingIndicator.remove();
+    }
+    
+    // Get current state
+    const displayedHotspot = state.displayedHotspot;
+    const pinnedHotspot = state.pinnedHotspot;
+    
+    if (!displayedHotspot) return;
+    
+    const isPinned = pinnedHotspot && pinnedHotspot.id === displayedHotspot.id;
+    const isPreviewing = pinnedHotspot && pinnedHotspot.id !== displayedHotspot.id;
+    
+    let indicatorHtml = '';
+    
+    if (isPinned) {
+      indicatorHtml = `
+        <span class="pinned-indicator">
+          Pinned
+          <button type="button" class="unpin-button" aria-label="Unpin this hotspot">×</button>
+        </span>
+      `;
+    } else if (isPreviewing) {
+      indicatorHtml = `
+        <span class="preview-indicator">
+          <span class="preview-label">Previewing</span>
+          <span class="pinned-hint">
+            Pinned: ${escapeHtml(pinnedHotspot.title.length > 20 ? pinnedHotspot.title.substring(0, 20) + '…' : pinnedHotspot.title)}
+          </span>
+        </span>
+      `;
+    }
+    
+    if (indicatorHtml) {
+      header.insertAdjacentHTML('beforeend', indicatorHtml);
+      
+      // Add click handler for unpin button if present
+      const unpinBtn = header.querySelector('.unpin-button');
+      if (unpinBtn) {
+        unpinBtn.addEventListener('click', handleUnpinClick);
+        unpinBtn.addEventListener('keydown', handleUnpinKeydown);
+      }
+    }
+  }
+  
+  function handleUnpinClick(e) {
+    e.stopPropagation();
+    unpinHotspot();
+  }
+  
+  function handleUnpinKeydown(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopPropagation();
+      unpinHotspot();
+    }
   }
 
   // Update visual highlights - pinned gets .pinned, hovered gets .active
@@ -531,19 +616,10 @@
 
   // ===== CURATOR PANEL =====
   function updateCuratorPanel(hotspot) {
-    const isPinned = state.pinnedHotspot && state.pinnedHotspot.id === hotspot.id;
-    const pinnedIndicator = isPinned ? `
-      <span class="pinned-indicator">
-        Pinned
-        <button type="button" class="unpin-button" aria-label="Unpin this hotspot">×</button>
-      </span>
-    ` : '';
-    
     curatorContent.innerHTML = `
       <div class="hotspot-detail" data-hotspot-id="${escapeHtml(hotspot.id)}">
         <div class="hotspot-header">
           <h3>${escapeHtml(hotspot.title)}</h3>
-          ${pinnedIndicator}
         </div>
         <div class="hotspot-narrative">
           ${hotspot.narrative}
@@ -557,14 +633,8 @@
       </div>
     `;
     
-    // Add click handler for unpin button
-    const unpinBtn = curatorContent.querySelector('.unpin-button');
-    if (unpinBtn) {
-      unpinBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        unpinHotspot();
-      });
-    }
+    // Update the indicator (pinned/preview badge)
+    updatePanelIndicator();
   }
 
   function showPlaceholder() {

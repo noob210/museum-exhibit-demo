@@ -759,6 +759,162 @@ async function runTests() {
         await context.close();
       }
     }
+    
+    // =========================================================================
+    // Test 10: Focus after × unpin - must not be on body
+    // =========================================================================
+    {
+      const testName = `Focus after × unpin ${side}: not on body`;
+      const { id: hotspotA } = hotspotData.first;
+      
+      const { context, page } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click hotspot A to pin it
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Click the × button
+        const unpinBtn = await page.$('.unpin-button');
+        if (!unpinBtn) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Unpin button not found' });
+          console.log(`  ${testName}: ✗ FAIL (no unpin button)`);
+          await context.close();
+          continue;
+        }
+        
+        await unpinBtn.click();
+        await page.waitForTimeout(200);
+        
+        // Check focus is not on body
+        const focusedTag = await page.evaluate(() => document.activeElement?.tagName?.toLowerCase());
+        if (focusedTag === 'body') {
+          results.push({ test: testName, status: 'FAIL', reason: 'Focus is on body after unpin' });
+          console.log(`  ${testName}: ✗ FAIL (focus on body)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS (focus on ${focusedTag})`);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    
+    // =========================================================================
+    // Test 11: × button size at least 32px
+    // =========================================================================
+    {
+      const testName = `× button size ${side}: at least 32px`;
+      const { id: hotspotA } = hotspotData.first;
+      
+      const { context, page } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click hotspot A to pin it
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Get × button size
+        const buttonSize = await page.evaluate(() => {
+          const btn = document.querySelector('.unpin-button');
+          if (!btn) return null;
+          const rect = btn.getBoundingClientRect();
+          return { width: rect.width, height: rect.height };
+        });
+        
+        if (!buttonSize) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Unpin button not found' });
+          console.log(`  ${testName}: ✗ FAIL (no button)`);
+        } else if (buttonSize.width < 32 || buttonSize.height < 32) {
+          results.push({ test: testName, status: 'FAIL', reason: `Button too small: ${buttonSize.width}x${buttonSize.height}px` });
+          console.log(`  ${testName}: ✗ FAIL (${buttonSize.width}x${buttonSize.height}px)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS (${buttonSize.width}x${buttonSize.height}px)`);
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    
+    // =========================================================================
+    // Test 12: Badge contrast at least 4.5:1
+    // =========================================================================
+    {
+      const testName = `Badge contrast ${side}: at least 4.5:1`;
+      const { id: hotspotA } = hotspotData.first;
+      
+      const { context, page } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click hotspot A to pin it
+        await clickHotspot(page, hotspotA);
+        await page.waitForTimeout(200);
+        
+        // Get computed colors and calculate contrast
+        const contrastRatio = await page.evaluate(() => {
+          const badge = document.querySelector('.pinned-indicator');
+          if (!badge) return null;
+          
+          const style = getComputedStyle(badge);
+          const bgColor = style.backgroundColor;
+          const textColor = style.color;
+          
+          // Parse RGB values
+          function parseRgb(color) {
+            const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+            if (!match) return null;
+            return { r: parseInt(match[1]), g: parseInt(match[2]), b: parseInt(match[3]) };
+          }
+          
+          // Calculate relative luminance
+          function luminance(rgb) {
+            const sRGB = [rgb.r, rgb.g, rgb.b].map(v => {
+              v /= 255;
+              return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+            });
+            return 0.2126 * sRGB[0] + 0.7152 * sRGB[1] + 0.0722 * sRGB[2];
+          }
+          
+          // Calculate contrast ratio
+          function contrast(rgb1, rgb2) {
+            const l1 = luminance(rgb1);
+            const l2 = luminance(rgb2);
+            const lighter = Math.max(l1, l2);
+            const darker = Math.min(l1, l2);
+            return (lighter + 0.05) / (darker + 0.05);
+          }
+          
+          const bg = parseRgb(bgColor);
+          const text = parseRgb(textColor);
+          if (!bg || !text) return null;
+          
+          return contrast(bg, text);
+        });
+        
+        if (contrastRatio === null) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Could not compute contrast' });
+          console.log(`  ${testName}: ✗ FAIL (no contrast data)`);
+        } else if (contrastRatio < 4.5) {
+          results.push({ test: testName, status: 'FAIL', reason: `Contrast ${contrastRatio.toFixed(2)}:1 < 4.5:1` });
+          console.log(`  ${testName}: ✗ FAIL (${contrastRatio.toFixed(2)}:1)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS (${contrastRatio.toFixed(2)}:1)`);
+        }
+      } finally {
+        await context.close();
+      }
+    }
   }
   
   await browser.close();
