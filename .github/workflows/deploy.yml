@@ -31,7 +31,7 @@ jobs:
       - name: Prepare deployment
         run: |
           mkdir -p _site
-          rsync -av --exclude='tests/' --exclude='node_modules/' --exclude='package*.json' --exclude='_site/' --exclude='.git/' . _site/
+          rsync -av --exclude='.github/' --exclude='README.md' --exclude='screenshots/' --exclude='tests/' --exclude='node_modules/' --exclude='package*.json' --exclude='_site/' --exclude='.git/' . _site/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

@@ -202,6 +202,52 @@ async function measureHotspot(page, hotspotId) {
   }, { id: hotspotId });
 }
 
+async function checkWebfontUsage(page, selector, expectedFamilyPrefix, description) {
+  // Use CDP to check what font is actually rendering the text
+  const cdp = await page.context().newCDPSession(page);
+  
+  try {
+    // Enable required domains
+    await cdp.send('DOM.enable');
+    await cdp.send('CSS.enable');
+    
+    const element = await page.$(selector);
+    if (!element) {
+      return { ok: false, error: `Element not found: ${selector}` };
+    }
+    
+    // Get the DOM node ID
+    const { root } = await cdp.send('DOM.getDocument');
+    const { nodeId } = await cdp.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector: selector
+    });
+    
+    if (!nodeId) {
+      return { ok: false, error: `Could not find node for: ${selector}` };
+    }
+    
+    // Get platform fonts for the node
+    const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId });
+    
+    // Check if any font starting with the expected family prefix is used as a custom font
+    // Browser may report variants like "Source Sans 3 ExtraLight" instead of just "Source Sans 3"
+    const usesWebfont = fonts.some(f => 
+      f.familyName.startsWith(expectedFamilyPrefix) && f.isCustomFont === true
+    );
+    
+    const usedFonts = fonts.map(f => `${f.familyName}${f.isCustomFont ? ' (webfont)' : ''}`).join(', ');
+    
+    return {
+      ok: usesWebfont,
+      usedFonts,
+      description
+    };
+  } finally {
+    await cdp.detach();
+  }
+}
+
 async function runTest(browser, baseUrl, viewport, fontCondition) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
@@ -262,9 +308,33 @@ async function runTest(browser, baseUrl, viewport, fontCondition) {
   // Wait for fonts to load (or fail)
   await page.waitForTimeout(300);
   
+  // Check webfont usage for self-hosted condition only
+  const fontChecks = [];
+  if (fontCondition.name === 'self-hosted') {
+    // Check header actions area uses Source Sans 3 webfont (sans-serif area)
+    const headerCheck = await checkWebfontUsage(
+      page, '.header-actions span', 'Source Sans 3', 'Header uses Source Sans 3 webfont'
+    );
+    fontChecks.push(headerCheck);
+    
+    // Check panel placeholder uses Source Sans 3 webfont (this is sans-serif italic)
+    const panelCheck = await checkWebfontUsage(
+      page, '.panel-placeholder p', 'Source Sans 3', 'Panel placeholder uses Source Sans 3 webfont'
+    );
+    fontChecks.push(panelCheck);
+  }
+  
   // Click flip button to show reverse side
   await page.click('#flip-button');
   await page.waitForTimeout(1000);
+  
+  // Check reverse text uses Crimson Pro for self-hosted condition
+  if (fontCondition.name === 'self-hosted') {
+    const reverseCheck = await checkWebfontUsage(
+      page, '.reverse-body p', 'Crimson Pro', 'Reverse body uses Crimson Pro webfont'
+    );
+    fontChecks.push(reverseCheck);
+  }
   
   // Wait for dynamic polygons to compute
   await page.waitForTimeout(200);
@@ -281,7 +351,7 @@ async function runTest(browser, baseUrl, viewport, fontCondition) {
   
   await context.close();
   
-  return { results, errors, failedRequests };
+  return { results, errors, failedRequests, fontChecks };
 }
 
 async function main() {
@@ -311,7 +381,7 @@ async function main() {
     for (const viewport of VIEWPORTS) {
       console.log(`\n  Viewport: ${viewport.name}`);
       
-      const { results, errors, failedRequests } = await runTest(browser, baseUrl, viewport, fontCondition);
+      const { results, errors, failedRequests, fontChecks } = await runTest(browser, baseUrl, viewport, fontCondition);
       
       // Check for errors
       if (errors.length > 0 || failedRequests.length > 0) {
@@ -321,6 +391,17 @@ async function main() {
         }
         if (failedRequests.length > 0) {
           console.log(`  ⚠ Failed requests: ${failedRequests.join(', ')}`);
+        }
+      }
+      
+      // Report font checks
+      if (fontChecks && fontChecks.length > 0) {
+        for (const fc of fontChecks) {
+          if (!fc.ok) {
+            hasErrors = true;
+            console.log(`  ⚠ Font check FAILED: ${fc.description}`);
+            console.log(`    Used fonts: ${fc.usedFonts || fc.error}`);
+          }
         }
       }
       
