@@ -1,13 +1,20 @@
-Copyright 2018 The Crimson Pro Project Authors (https://github.com/nickkid/Crimson-Pro)
+This directory contains fonts licensed under the SIL Open Font License.
 
-This Font Software is licensed under the SIL Open Font License, Version 1.1.
-This license is copied below, and is also available with a FAQ at:
-https://openfontlicense.org
+================================================================================
+CRIMSON PRO
+================================================================================
+Copyright 2018 The Crimson Pro Project Authors
+https://github.com/Fonthausen/CrimsonPro
 
+================================================================================
+SOURCE SANS 3
+================================================================================
+Copyright 2010-2020 Adobe (http://www.adobe.com/)
+https://github.com/adobe-fonts/source-sans
 
------------------------------------------------------------
+================================================================================
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
------------------------------------------------------------
+================================================================================
 
 PREAMBLE
 The goals of the Open Font License (OFL) are to stimulate worldwide

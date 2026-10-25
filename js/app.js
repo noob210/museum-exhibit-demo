@@ -103,28 +103,39 @@
   // This ensures hotspots align regardless of which font renders
   
   function initDynamicPolygons() {
-    // Compute after fonts are ready
+    // Compute after fonts are ready, but only if reverse is visible
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(() => {
-        computeDynamicPolygons();
+        if (state.currentSide === 'reverse') {
+          computeDynamicPolygons();
+        }
       });
-    } else {
-      // Fallback for browsers without FontFaceSet API
-      setTimeout(computeDynamicPolygons, 100);
     }
     
     // Recompute when fonts finish loading (catches late-loading fonts)
     if (document.fonts) {
       document.fonts.addEventListener('loadingdone', () => {
-        computeDynamicPolygons();
+        if (state.currentSide === 'reverse') {
+          computeDynamicPolygons();
+        }
       });
     }
     
-    // Recompute on resize (debounced)
-    window.addEventListener('resize', debounce(computeDynamicPolygons, 150));
+    // Recompute on resize (debounced), only if reverse is visible
+    window.addEventListener('resize', debounce(() => {
+      if (state.currentSide === 'reverse') {
+        computeDynamicPolygons();
+      }
+    }, 150));
   }
   
   function computeDynamicPolygons() {
+    // Only compute when reverse side is visible to ensure accurate measurements
+    // (text must be rendered without 180° rotation to get correct coordinates)
+    if (state.currentSide !== 'reverse') {
+      return;
+    }
+    
     // Only compute for reverse-side hotspots (front side uses static image coordinates)
     const reverseHotspots = hotspots.filter(h => h.side === 'reverse');
     
@@ -223,11 +234,36 @@
     clearHotspots(frontOverlay);
     clearHotspots(backOverlay);
 
-    // Render hotspots for each side
-    hotspots.forEach(hotspot => {
-      const overlay = hotspot.side === 'front' ? frontOverlay : backOverlay;
+    // Separate hotspots by side
+    const frontHotspots = hotspots.filter(h => h.side === 'front');
+    const reverseHotspots = hotspots.filter(h => h.side === 'reverse');
+    
+    // Sort reverse hotspots by reading order: top to bottom, then left to right
+    // This ensures Tab order follows the natural reading flow
+    reverseHotspots.sort((a, b) => {
+      const aTop = Math.min(...a.polygon.map(p => p[1]));
+      const bTop = Math.min(...b.polygon.map(p => p[1]));
+      const aLeft = Math.min(...a.polygon.map(p => p[0]));
+      const bLeft = Math.min(...b.polygon.map(p => p[0]));
+      
+      // Primary sort by vertical position (top)
+      if (Math.abs(aTop - bTop) > 20) {
+        return aTop - bTop;
+      }
+      // Secondary sort by horizontal position (left) for items on same line
+      return aLeft - bLeft;
+    });
+
+    // Render front hotspots (keep original order for image-based hotspots)
+    frontHotspots.forEach(hotspot => {
       const polygon = createHotspotPolygon(hotspot);
-      overlay.appendChild(polygon);
+      frontOverlay.appendChild(polygon);
+    });
+    
+    // Render reverse hotspots in reading order
+    reverseHotspots.forEach(hotspot => {
+      const polygon = createHotspotPolygon(hotspot);
+      backOverlay.appendChild(polygon);
     });
   }
 
