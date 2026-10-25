@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="An interactive digital exhibit exploring a rare 1896 cabinet card photograph of James J. Corbett, heavyweight boxing champion.">
+  <title>Interactive Museum Exhibit | James J. Corbett, 1896</title>
+  
+  <!-- Preload critical assets -->
+  <link rel="preload" href="assets/images/corbett-front.jpg" as="image">
+  <link rel="preload" href="fonts/crimson-pro-latin.woff2" as="font" type="font/woff2" crossorigin>
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/styles.css">
+  
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏛️</text></svg>">
+</head>
+<body>
+  <!-- Skip Link for Accessibility -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <div class="exhibit-container">
+    <!-- Header -->
+    <header class="exhibit-header">
+      <h1 class="exhibit-title">
+        James J. Corbett, 1896
+        <small>Cabinet Card by Elmer Chickering, Boston</small>
+      </h1>
+      <div class="header-actions">
+        <span style="font-size: 0.875rem; color: var(--color-text-muted);">
+          Interactive Museum Exhibit
+        </span>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="main-content" class="exhibit-main">
+      <!-- Artifact Canvas (Left) -->
+      <section class="artifact-canvas" aria-label="Artifact viewer">
+        <div class="card-container">
+          <div class="card-wrapper">
+            <div class="card-inner" id="card-inner">
+              <!-- Front Side -->
+              <div class="card-face card-front">
+                <div class="artifact-image-container">
+                  <img 
+                    src="assets/images/corbett-front.jpg" 
+                    alt="Cabinet card photograph of James J. Corbett in boxing stance, circa 1896, by Elmer Chickering"
+                    class="artifact-image"
+                    width="807"
+                    height="1024"
+                    loading="eager"
+                  >
+                  <!-- SVG Hotspot Overlay -->
+                  <svg 
+                    id="front-overlay"
+                    class="hotspot-overlay" 
+                    viewBox="0 0 807 1024" 
+                    preserveAspectRatio="xMidYMid meet"
+                    aria-label="Front side hotspots"
+                    role="group"
+                  >
+                    <!-- Hotspots rendered by JavaScript -->
+                  </svg>
+                </div>
+              </div>
+
+              <!-- Reverse Side -->
+              <div class="card-face card-back">
+                <div class="artifact-image-container">
+                  <!-- Reconstructed reverse side styled as 1890s card stock -->
+                  <!-- Uses fixed dimensions (807x1024) scaled to fit, keeping text and hotspots aligned -->
+                  <div class="reverse-scale-wrapper">
+                    <div class="card-reverse-content" id="reverse-content">
+                    <header class="reverse-header">
+                      <p class="reverse-studio-name"><span data-hotspot="chickering-studio">The Royal Studio</span></p>
+                      <p class="reverse-tagline"><span data-hotspot="chickering-name">Elmer Chickering</span>, Proprietor</p>
+                      <p class="reverse-address"><span data-hotspot="boston-address">21 West Street, Boston, Massachusetts</span></p>
+                    </header>
+
+                    <div class="reverse-body">
+                      <p><strong>JAMES J. CORBETT</strong>, known to admirers as "Gentleman Jim," stands as the embodiment of modern scientific boxing. Born in San Francisco on September 1, 1866, to Irish immigrant parents Patrick Corbett and Katherine McDonald, he rose from humble origins as a bank clerk to become the most celebrated pugilist of his generation.</p>
+                      
+                      <p>On the memorable evening of September 7, 1892, at the Olympic Club of New Orleans, Mr. Corbett achieved what many deemed impossible—he defeated the seemingly invincible <span data-hotspot="sullivan-defeat">John&nbsp;L.&nbsp;Sullivan</span>, "The Boston Strong Boy," in twenty-one rounds to claim the World's Heavyweight Championship. This historic contest, conducted under the <span data-hotspot="queensberry-rules">Queensberry&nbsp;Rules</span>, marked the dawn of modern boxing.</p>
+                      
+                      <p>Mr. Corbett's revolutionary approach emphasizes speed, scientific footwork, and defensive mastery over brute strength. Under the expert management of the theatrical impresario <span data-hotspot="billy-brady">William&nbsp;A.&nbsp;Brady</span>, he has elevated the sporting art to unprecedented respectability. The champion maintains his supremacy through rigorous training at the <span data-hotspot="olympic-club">Olympic&nbsp;Athletic&nbsp;Club</span> of San Francisco, where he first developed his distinctive style under the tutelage of <span data-hotspot="walter-watson">Walter&nbsp;Watson</span>.</p>
+                      
+                      <p>Beyond the ring, Mr. Corbett has distinguished himself upon the theatrical stage, appearing in productions arranged by Mr. Brady. His younger brother, <span data-hotspot="joe-corbett">Joseph&nbsp;Corbett</span>, has achieved notable success as a pitcher with the <span data-hotspot="baltimore-orioles">Baltimore&nbsp;Orioles</span> of the National League.</p>
+                    </div>
+
+                    <footer class="reverse-footer">
+                      <p class="reverse-copyright"><span data-hotspot="copyright-notice">Copyright 1896 by E. Chickering</span></p>
+                    </footer>
+                    
+                    <!-- SVG Hotspot Overlay for Reverse - inside the scaled container -->
+                    <svg 
+                      id="back-overlay"
+                      class="hotspot-overlay" 
+                      viewBox="0 0 807 1024" 
+                      preserveAspectRatio="xMidYMid meet"
+                      aria-label="Reverse side hotspots"
+                      role="group"
+                      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+                    >
+                      <!-- Hotspots rendered by JavaScript -->
+                    </svg>
+                  </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Flip Button -->
+        <button 
+          id="flip-button" 
+          class="flip-button" 
+          type="button"
+          aria-pressed="false"
+          aria-controls="card-inner"
+        >
+          <span class="flip-icon" aria-hidden="true">↻</span>
+          <span class="flip-label">View Reverse</span>
+        </button>
+      </section>
+
+      <!-- Curator Panel (Right) -->
+      <aside class="curator-panel" aria-label="Curator notes">
+        <div class="panel-header">
+          <h2>Museum Curator</h2>
+        </div>
+        <div id="curator-content" class="panel-content">
+          <!-- Content populated by JavaScript -->
+        </div>
+      </aside>
+    </main>
+
+    <!-- Footer -->
+    <footer class="exhibit-footer">
+      <p>
+        Image: <a href="https://www.loc.gov/item/96516350/" target="_blank" rel="noopener noreferrer">James J. Corbett by Elmer Chickering, c. 1896</a> — 
+        Library of Congress, Prints &amp; Photographs Division, LC-USZ62-116944. 
+        No known copyright restrictions.
+      </p>
+      <p style="margin-top: 0.5rem; font-size: 0.75rem;">
+        <em>Note: The reverse side is a demo reconstruction created to illustrate the interactive features. 
+        Historical facts are accurate; the typeset layout is a modern interpretation of period style.</em>
+      </p>
+    </footer>
+  </div>
+
+  <!-- Contact Modal -->
+  <div id="contact-modal" class="modal-overlay" aria-hidden="true" role="dialog" aria-labelledby="modal-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-title">Submit a Contribution</h3>
+        <button id="modal-close" class="modal-close" type="button" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Have information about this artifact or corrections to share? Send us a message.</p>
+        <form id="contact-form" class="modal-form">
+          <div class="form-group">
+            <label for="contact-name">Name</label>
+            <input type="text" id="contact-name" name="name" required>
+          </div>
+          <div class="form-group">
+            <label for="contact-email">Email</label>
+            <input type="email" id="contact-email" name="email" required>
+          </div>
+          <div class="form-group">
+            <label for="contact-message">Message</label>
+            <textarea id="contact-message" name="message" required></textarea>
+          </div>
+          <button type="submit" class="submit-button">Send via Email</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Contact Button -->
+  <button 
+    id="contact-button" 
+    class="contact-fab" 
+    type="button"
+    aria-label="Submit a contribution or contact us"
+    title="Submit a contribution"
+  >
+    ✉️
+  </button>
+
+  <!-- Scripts -->
+  <script src="data/hotspots.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
