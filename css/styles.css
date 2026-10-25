@@ -199,6 +199,12 @@ a:focus-visible {
   cursor: default;
 }
 
+/* Native dimensions for coordinate-locked scaling */
+.card-native-size {
+  --card-width: 807px;
+  --card-height: 1024px;
+}
+
 .card-inner {
   position: relative;
   width: 100%;
@@ -438,18 +444,34 @@ a:focus-visible {
 }
 
 /* ===== REVERSE SIDE STYLING ===== */
-.card-reverse-content {
+/* 
+ * The reverse side uses a fixed-size container (807x1024) that scales as a unit.
+ * This keeps text and SVG hotspots locked together at any viewport size.
+ */
+.reverse-scale-wrapper {
   width: 100%;
   height: 100%;
-  padding: 8%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: linear-gradient(to bottom, #f4ece0 0%, #e8dcc8 100%);
+}
+
+.card-reverse-content {
+  /* Fixed dimensions matching the viewBox coordinate space */
+  width: 807px;
+  height: 1024px;
+  flex-shrink: 0;
+  padding: 65px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  background: 
-    linear-gradient(to bottom, #f4ece0 0%, #e8dcc8 100%);
   font-family: var(--font-serif);
   position: relative;
-  overflow: hidden;
+  background: linear-gradient(to bottom, #f4ece0 0%, #e8dcc8 100%);
+  /* Scale to fit container while preserving aspect ratio */
+  transform-origin: center center;
 }
 
 .card-reverse-content::before {
@@ -466,28 +488,28 @@ a:focus-visible {
 .reverse-header {
   text-align: center;
   border-bottom: 2px double var(--color-text);
-  padding-bottom: 5%;
-  margin-bottom: 5%;
+  padding-bottom: 40px;
+  margin-bottom: 40px;
 }
 
 .reverse-studio-name {
-  font-size: clamp(0.875rem, 2.5vw, 1.25rem);
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  margin: 0 0 2%;
+  margin: 0 0 16px;
   color: var(--color-text);
 }
 
 .reverse-tagline {
-  font-size: clamp(0.625rem, 1.8vw, 0.875rem);
+  font-size: 15px;
   font-style: italic;
   color: var(--color-text-muted);
-  margin: 0 0 3%;
+  margin: 0 0 24px;
 }
 
 .reverse-address {
-  font-size: clamp(0.5rem, 1.5vw, 0.75rem);
+  font-size: 12px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--color-text-muted);
@@ -496,8 +518,8 @@ a:focus-visible {
 
 .reverse-body {
   flex: 1;
-  font-size: clamp(0.5rem, 1.4vw, 0.6875rem);
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.7;
   text-align: justify;
   hyphens: auto;
   color: var(--color-text);
@@ -505,7 +527,7 @@ a:focus-visible {
 }
 
 .reverse-body p {
-  margin: 0 0 3%;
+  margin: 0 0 24px;
   text-indent: 1.5em;
 }
 
@@ -516,12 +538,12 @@ a:focus-visible {
 .reverse-footer {
   text-align: center;
   border-top: 1px solid var(--color-border);
-  padding-top: 5%;
-  margin-top: 5%;
+  padding-top: 40px;
+  margin-top: 40px;
 }
 
 .reverse-copyright {
-  font-size: clamp(0.5rem, 1.3vw, 0.6875rem);
+  font-size: 12px;
   font-style: italic;
   color: var(--color-text-muted);
   margin: 0;
@@ -744,13 +766,20 @@ body.edit-mode .card-wrapper {
     align-items: center;
   }
   
+  .artifact-canvas {
+    width: 100%;
+    max-width: 600px;
+  }
+  
   .curator-panel {
     width: 100%;
     max-width: 600px;
   }
   
+  /* Let the card scale up to fill available space */
   .card-container {
-    max-width: 400px;
+    max-width: 100%;
+    width: 100%;
   }
 }
 
@@ -772,6 +801,10 @@ body.edit-mode .card-wrapper {
   .exhibit-main {
     padding: var(--spacing-md);
     gap: var(--spacing-lg);
+  }
+  
+  .artifact-canvas {
+    max-width: 100%;
   }
   
   .card-container {

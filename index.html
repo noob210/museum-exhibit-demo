@@ -44,7 +44,7 @@
       <section class="artifact-canvas" aria-label="Artifact viewer">
         <div class="card-container">
           <div class="card-wrapper">
-            <div class="card-inner">
+            <div class="card-inner" id="card-inner">
               <!-- Front Side -->
               <div class="card-face card-front">
                 <div class="artifact-image-container">
@@ -74,39 +74,44 @@
               <div class="card-face card-back">
                 <div class="artifact-image-container">
                   <!-- Reconstructed reverse side styled as 1890s card stock -->
-                  <div class="card-reverse-content">
+                  <!-- Uses fixed dimensions (807x1024) scaled to fit, keeping text and hotspots aligned -->
+                  <div class="reverse-scale-wrapper">
+                    <div class="card-reverse-content" id="reverse-content">
                     <header class="reverse-header">
-                      <p class="reverse-studio-name">The Royal Studio</p>
-                      <p class="reverse-tagline">Elmer Chickering, Proprietor</p>
-                      <p class="reverse-address">21 West Street, Boston, Massachusetts</p>
+                      <p class="reverse-studio-name"><span data-hotspot="chickering-studio">The Royal Studio</span></p>
+                      <p class="reverse-tagline"><span data-hotspot="chickering-name">Elmer Chickering</span>, Proprietor</p>
+                      <p class="reverse-address"><span data-hotspot="boston-address">21 West Street, Boston, Massachusetts</span></p>
                     </header>
 
                     <div class="reverse-body">
                       <p><strong>JAMES J. CORBETT</strong>, known to admirers as "Gentleman Jim," stands as the embodiment of modern scientific boxing. Born in San Francisco on September 1, 1866, to Irish immigrant parents Patrick Corbett and Katherine McDonald, he rose from humble origins as a bank clerk to become the most celebrated pugilist of his generation.</p>
                       
-                      <p>On the memorable evening of September 7, 1892, at the Olympic Club of New Orleans, Mr. Corbett achieved what many deemed impossible—he defeated the seemingly invincible John L. Sullivan, "The Boston Strong Boy," in twenty-one rounds to claim the World's Heavyweight Championship. This historic contest, conducted under the Marquess of Queensberry Rules, marked the dawn of modern boxing.</p>
+                      <p>On the memorable evening of September 7, 1892, at the Olympic Club of New Orleans, Mr. Corbett achieved what many deemed impossible—he defeated the seemingly invincible <span data-hotspot="sullivan-defeat">John&nbsp;L.&nbsp;Sullivan</span>, "The Boston Strong Boy," in twenty-one rounds to claim the World's Heavyweight Championship. This historic contest, conducted under the <span data-hotspot="queensberry-rules">Queensberry&nbsp;Rules</span>, marked the dawn of modern boxing.</p>
                       
-                      <p>Mr. Corbett's revolutionary approach emphasizes speed, scientific footwork, and defensive mastery over brute strength. Under the expert management of the theatrical impresario Mr. William A. Brady, he has elevated the sporting art to unprecedented respectability. The champion maintains his supremacy through rigorous training at the Olympic Athletic Club of San Francisco, where he first developed his distinctive style under the tutelage of Mr. Walter Watson.</p>
+                      <p>Mr. Corbett's revolutionary approach emphasizes speed, scientific footwork, and defensive mastery over brute strength. Under the expert management of the theatrical impresario <span data-hotspot="billy-brady">William&nbsp;A.&nbsp;Brady</span>, he has elevated the sporting art to unprecedented respectability. The champion maintains his supremacy through rigorous training at the <span data-hotspot="olympic-club">Olympic&nbsp;Athletic&nbsp;Club</span> of San Francisco, where he first developed his distinctive style under the tutelage of <span data-hotspot="walter-watson">Walter&nbsp;Watson</span>.</p>
                       
-                      <p>Beyond the ring, Mr. Corbett has distinguished himself upon the theatrical stage, appearing in productions arranged by Mr. Brady. His younger brother, Mr. Joseph Corbett, has achieved notable success as a pitcher with the Baltimore Orioles of the National League.</p>
+                      <p>Beyond the ring, Mr. Corbett has distinguished himself upon the theatrical stage, appearing in productions arranged by Mr. Brady. His younger brother, <span data-hotspot="joe-corbett">Joseph&nbsp;Corbett</span>, has achieved notable success as a pitcher with the <span data-hotspot="baltimore-orioles">Baltimore&nbsp;Orioles</span> of the National League.</p>
                     </div>
 
                     <footer class="reverse-footer">
-                      <p class="reverse-copyright">Copyright 1896 by E. Chickering</p>
+                      <p class="reverse-copyright"><span data-hotspot="copyright-notice">Copyright 1896 by E. Chickering</span></p>
                     </footer>
+                    
+                    <!-- SVG Hotspot Overlay for Reverse - inside the scaled container -->
+                    <svg 
+                      id="back-overlay"
+                      class="hotspot-overlay" 
+                      viewBox="0 0 807 1024" 
+                      preserveAspectRatio="xMidYMid meet"
+                      aria-label="Reverse side hotspots"
+                      role="group"
+                      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+                    >
+                      <!-- Hotspots rendered by JavaScript -->
+                    </svg>
+                  </div>
                   </div>
 
-                  <!-- SVG Hotspot Overlay for Reverse -->
-                  <svg 
-                    id="back-overlay"
-                    class="hotspot-overlay" 
-                    viewBox="0 0 807 1024" 
-                    preserveAspectRatio="xMidYMid meet"
-                    aria-label="Reverse side hotspots"
-                    role="group"
-                  >
-                    <!-- Hotspots rendered by JavaScript -->
-                  </svg>
                 </div>
               </div>
             </div>

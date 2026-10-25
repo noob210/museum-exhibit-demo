@@ -140,6 +140,17 @@ To enable:
 
 The site will be available at `https://<username>.github.io/<repository>/`
 
+## Configuration
+
+### Contact Email
+The contact form sends emails to the address defined in `js/app.js`:
+
+```javascript
+const CONTACT_EMAIL = 'curator@example.com';
+```
+
+Change this constant to your actual email address.
+
 ## Local Development
 
 The exhibit requires no build process. Simply edit the HTML, CSS, or JavaScript files and refresh your browser.

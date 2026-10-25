@@ -6,19 +6,25 @@
 (function() {
   'use strict';
 
+  // ===== CONFIGURATION =====
+  // Contact email address - change this to your actual email
+  const CONTACT_EMAIL = 'curator@example.com';
+
   // ===== STATE =====
   const state = {
     currentSide: 'front',
     activeHotspot: null,
     isFlipping: false,
     editMode: false,
-    editPoints: []
+    editPoints: [],
+    modalOpen: false
   };
 
   // ===== DOM REFERENCES =====
   let cardInner, flipButton, curatorContent;
   let frontOverlay, backOverlay;
   let contactModal, contactForm;
+  let reverseContent, reverseWrapper;
 
   // ===== INITIALIZATION =====
   function init() {
@@ -26,16 +32,24 @@
     state.editMode = new URLSearchParams(window.location.search).has('edit');
     
     // Cache DOM elements
-    cardInner = document.querySelector('.card-inner');
+    cardInner = document.getElementById('card-inner');
     flipButton = document.getElementById('flip-button');
     curatorContent = document.getElementById('curator-content');
     frontOverlay = document.getElementById('front-overlay');
     backOverlay = document.getElementById('back-overlay');
     contactModal = document.getElementById('contact-modal');
     contactForm = document.getElementById('contact-form');
+    reverseContent = document.getElementById('reverse-content');
+    reverseWrapper = document.querySelector('.reverse-scale-wrapper');
 
+    // Initialize reverse side scaling
+    initReverseScaling();
+    
     // Initialize hotspots
     renderHotspots();
+    
+    // Set initial visibility (hide back hotspots from tab order)
+    updateHotspotVisibility();
     
     // Set up event listeners
     setupEventListeners();
@@ -47,6 +61,30 @@
 
     // Show initial placeholder
     showPlaceholder();
+  }
+
+  // ===== REVERSE SIDE SCALING =====
+  function initReverseScaling() {
+    // Scale the fixed-size reverse content to fit its container
+    scaleReverseContent();
+    
+    // Re-scale on resize
+    window.addEventListener('resize', debounce(scaleReverseContent, 100));
+  }
+
+  function scaleReverseContent() {
+    if (!reverseContent || !reverseWrapper) return;
+    
+    const wrapperRect = reverseWrapper.getBoundingClientRect();
+    const contentWidth = 807;
+    const contentHeight = 1024;
+    
+    // Calculate scale to fit
+    const scaleX = wrapperRect.width / contentWidth;
+    const scaleY = wrapperRect.height / contentHeight;
+    const scale = Math.min(scaleX, scaleY);
+    
+    reverseContent.style.transform = `scale(${scale})`;
   }
 
   // ===== HOTSPOT RENDERING =====
@@ -64,6 +102,7 @@
   }
 
   function clearHotspots(overlay) {
+    if (!overlay) return;
     const polygons = overlay.querySelectorAll('.hotspot-polygon');
     polygons.forEach(p => p.remove());
   }
@@ -76,6 +115,7 @@
     polygon.setAttribute('points', points);
     polygon.setAttribute('class', 'hotspot-polygon');
     polygon.setAttribute('data-hotspot-id', hotspot.id);
+    polygon.setAttribute('data-hotspot-side', hotspot.side);
     
     // Accessibility attributes
     polygon.setAttribute('tabindex', '0');
@@ -98,9 +138,38 @@
     return polygon;
   }
 
+  // ===== HOTSPOT VISIBILITY =====
+  function updateHotspotVisibility() {
+    // Make hidden face's hotspots non-focusable and non-interactive
+    const frontHotspots = frontOverlay.querySelectorAll('.hotspot-polygon');
+    const backHotspots = backOverlay.querySelectorAll('.hotspot-polygon');
+    
+    if (state.currentSide === 'front') {
+      frontHotspots.forEach(h => {
+        h.setAttribute('tabindex', '0');
+        h.style.pointerEvents = 'auto';
+      });
+      backHotspots.forEach(h => {
+        h.setAttribute('tabindex', '-1');
+        h.style.pointerEvents = 'none';
+      });
+    } else {
+      frontHotspots.forEach(h => {
+        h.setAttribute('tabindex', '-1');
+        h.style.pointerEvents = 'none';
+      });
+      backHotspots.forEach(h => {
+        h.setAttribute('tabindex', '0');
+        h.style.pointerEvents = 'auto';
+      });
+    }
+  }
+
   // ===== HOTSPOT INTERACTIONS =====
   function handleHotspotHover(hotspot) {
     if (state.isFlipping) return;
+    // Only respond if this hotspot is on the visible side
+    if (hotspot.side !== state.currentSide) return;
     updateCuratorPanel(hotspot);
     highlightHotspot(hotspot.id);
   }
@@ -118,6 +187,8 @@
 
   function handleHotspotClick(hotspot) {
     if (state.isFlipping) return;
+    // Only respond if this hotspot is on the visible side
+    if (hotspot.side !== state.currentSide) return;
     
     // Toggle active state
     if (state.activeHotspot && state.activeHotspot.id === hotspot.id) {
@@ -203,12 +274,17 @@
     flipButton.querySelector('.flip-label').textContent = 
       isFlipped ? 'View Front' : 'View Reverse';
 
-    // Re-enable interactions after animation
+    // Update hotspot visibility after flip animation
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const delay = prefersReducedMotion ? 50 : 800;
     
     setTimeout(() => {
       state.isFlipping = false;
+      updateHotspotVisibility();
+      // Re-scale reverse content after flip
+      if (state.currentSide === 'reverse') {
+        scaleReverseContent();
+      }
     }, delay);
   }
 
@@ -230,27 +306,56 @@
 
     // Close on Escape key
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && overlay.classList.contains('visible')) {
+      if (e.key === 'Escape' && state.modalOpen) {
         closeModal();
       }
     });
 
     // Handle form submission
     contactForm.addEventListener('submit', handleContactSubmit);
+    
+    // Focus trap
+    contactModal.addEventListener('keydown', handleModalKeydown);
   }
 
   function openModal() {
+    state.modalOpen = true;
     contactModal.classList.add('visible');
     contactModal.setAttribute('aria-hidden', 'false');
-    document.getElementById('contact-name').focus();
     document.body.style.overflow = 'hidden';
+    
+    // Focus first input after animation
+    setTimeout(() => {
+      document.getElementById('contact-name').focus();
+    }, 100);
   }
 
   function closeModal() {
+    state.modalOpen = false;
     contactModal.classList.remove('visible');
     contactModal.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
     document.getElementById('contact-button').focus();
+  }
+
+  function handleModalKeydown(e) {
+    if (e.key !== 'Tab' || !state.modalOpen) return;
+    
+    // Get all focusable elements in the modal
+    const focusableElements = contactModal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+    
+    // Trap focus within the modal
+    if (e.shiftKey && document.activeElement === firstElement) {
+      e.preventDefault();
+      lastElement.focus();
+    } else if (!e.shiftKey && document.activeElement === lastElement) {
+      e.preventDefault();
+      firstElement.focus();
+    }
   }
 
   function handleContactSubmit(e) {
@@ -267,7 +372,7 @@
     );
     
     // Open email client
-    window.location.href = `mailto:curator@example.com?subject=${subject}&body=${body}`;
+    window.location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}&body=${body}`;
     
     // Close modal
     closeModal();
@@ -306,16 +411,25 @@
 
   function handleEditClick(e) {
     // Get click position relative to the overlay
-    const overlay = state.currentSide === 'front' ? frontOverlay : backOverlay;
+    const overlay = state.currentSide === 'front' ? frontOverlay : reverseContent;
     const rect = overlay.getBoundingClientRect();
     
-    // Calculate position in viewBox coordinates
-    const viewBox = overlay.viewBox.baseVal;
-    const scaleX = viewBox.width / rect.width;
-    const scaleY = viewBox.height / rect.height;
+    let x, y;
     
-    const x = Math.round((e.clientX - rect.left) * scaleX);
-    const y = Math.round((e.clientY - rect.top) * scaleY);
+    if (state.currentSide === 'front') {
+      // Front side: calculate position in viewBox coordinates
+      const viewBox = frontOverlay.viewBox.baseVal;
+      const scaleX = viewBox.width / rect.width;
+      const scaleY = viewBox.height / rect.height;
+      x = Math.round((e.clientX - rect.left) * scaleX);
+      y = Math.round((e.clientY - rect.top) * scaleY);
+    } else {
+      // Reverse side: get position in the fixed 807x1024 space
+      const scale = parseFloat(reverseContent.style.transform.match(/scale\(([\d.]+)\)/)?.[1] || 1);
+      const contentRect = reverseContent.getBoundingClientRect();
+      x = Math.round((e.clientX - contentRect.left) / scale);
+      y = Math.round((e.clientY - contentRect.top) / scale);
+    }
     
     state.editPoints.push([x, y]);
     
@@ -324,7 +438,7 @@
     console.log(`Current polygon: [${state.editPoints.map(p => `[${p.join(', ')}]`).join(', ')}]`);
     
     // Draw visual indicator
-    drawEditPoint(overlay, x, y);
+    drawEditPoint(state.currentSide === 'front' ? frontOverlay : backOverlay, x, y);
   }
 
   function drawEditPoint(overlay, x, y) {
@@ -382,20 +496,23 @@
     return div.innerHTML;
   }
 
+  function debounce(fn, delay) {
+    let timeoutId;
+    return function(...args) {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => fn.apply(this, args), delay);
+    };
+  }
+
   // ===== EVENT LISTENERS SETUP =====
   function setupEventListeners() {
     setupFlipButton();
     setupContactModal();
 
-    // Handle window resize for responsive hotspot positioning
-    let resizeTimeout;
-    window.addEventListener('resize', () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(() => {
-        // Hotspots use viewBox so they scale automatically
-        // This is here for any future resize-dependent logic
-      }, 100);
-    });
+    // Handle window resize
+    window.addEventListener('resize', debounce(() => {
+      scaleReverseContent();
+    }, 100));
   }
 
   // ===== START APPLICATION =====
