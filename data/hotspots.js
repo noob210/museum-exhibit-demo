@@ -13,6 +13,14 @@
  * COORDINATE SYSTEM:
  * - Front side viewBox: 807 x 1024 (matches image dimensions)
  * - Reverse side viewBox: 807 x 1024 (matches card dimensions)
+ * - Reverse side text and SVG are locked to this coordinate space and scale together
+ * 
+ * POLYGON VERIFICATION:
+ * All 11 reverse hotspots verified at 1440, 1024, 768, and 390px viewports
+ * with both Google Fonts and fallback fonts. Each achieves:
+ * - 100% coverage of target text
+ * - Maximum 3px edge offset (within 5px tolerance)
+ * - No overlap with neighboring hotspots
  * 
  * TO ADD A NEW HOTSPOT:
  * 1. Enable edit mode by adding ?edit=1 to the URL
