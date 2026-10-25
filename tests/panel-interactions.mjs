@@ -4,6 +4,8 @@
  * Tests for:
  * - Bug 5: Panel link should work on first click
  * - Bug 6: Panel should be sticky (not reset on mouse leave)
+ * - Keyboard focus should not switch panel when tabbing through hotspots
+ * - Correct hotspot URL opens in all interaction modes
  * 
  * Usage: node tests/panel-interactions.mjs
  */
@@ -18,7 +20,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 const BASE_PATH = '/museum-exhibit-demo';
 
-// Simple static file server
+// Hotspot data for verification (must match data/hotspots.js)
+const HOTSPOT_INFO = {
+  front: {
+    first: { id: 'corbett-face', urlContains: 'wikipedia.org/wiki/James_J._Corbett' },
+    middle: { id: 'boxing-stance', urlContains: 'britannica.com/sports/boxing' },
+    last: { id: 'cabinet-mount', urlContains: 'wikipedia.org/wiki/Cabinet_card' }
+  },
+  reverse: {
+    first: { id: 'chickering-studio', urlContains: 'loc.gov/pictures' },
+    middle: { id: 'olympic-club', urlContains: 'wikipedia.org/wiki/Olympic_Club' },
+    last: { id: 'copyright-notice', urlContains: 'wikipedia.org/wiki/Burrow-Giles' }
+  }
+};
+
 function createServer() {
   return new Promise((resolve) => {
     const mimeTypes = {
@@ -61,6 +76,73 @@ function createServer() {
   });
 }
 
+async function setupPage(browser, baseUrl) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  
+  // Block all external network requests
+  await page.route('**/*', (route) => {
+    const url = route.request().url();
+    if (url.startsWith(baseUrl.replace(/\/$/, '')) || url.startsWith('http://127.0.0.1')) {
+      route.continue();
+    } else {
+      route.abort();
+    }
+  });
+  
+  // Track popup URLs
+  let lastPopupUrl = null;
+  context.on('page', async (newPage) => {
+    lastPopupUrl = newPage.url();
+    await newPage.close();
+  });
+  
+  return { context, page, getLastPopupUrl: () => lastPopupUrl };
+}
+
+async function flipToSide(page, side) {
+  if (side === 'reverse') {
+    await page.click('#flip-button');
+    await page.waitForTimeout(1000);
+  }
+}
+
+async function getHotspotElement(page, hotspotId) {
+  return page.$(`[data-hotspot-id="${hotspotId}"]`);
+}
+
+async function clickHotspot(page, hotspotId) {
+  const hotspot = await page.$(`[data-hotspot-id="${hotspotId}"]`);
+  if (!hotspot) return false;
+  const box = await hotspot.boundingBox();
+  if (!box) return false;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  return true;
+}
+
+async function tabToHotspot(page, hotspotId, maxTabs = 30) {
+  for (let i = 0; i < maxTabs; i++) {
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(50);
+    
+    const focusedId = await page.evaluate(() => 
+      document.activeElement?.getAttribute('data-hotspot-id')
+    );
+    
+    if (focusedId === hotspotId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function getPanelLinkUrl(page) {
+  return page.evaluate(() => {
+    const link = document.querySelector('.hotspot-link');
+    return link ? link.href : null;
+  });
+}
+
 async function runTests() {
   console.log('Panel Interaction Tests');
   console.log('='.repeat(70));
@@ -78,223 +160,358 @@ async function runTests() {
     console.log(`Testing ${side} side`);
     console.log('─'.repeat(70));
     
-    // Test (a): Click hotspot, then click panel link - should open on FIRST click
-    {
-      const testName = `(a) ${side}: Panel link opens on first click`;
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      const page = await context.newPage();
+    const hotspotData = HOTSPOT_INFO[side];
+    
+    // =========================================================================
+    // Test 1: Mouse click on first, middle, last hotspot - verify correct URL
+    // =========================================================================
+    for (const position of ['first', 'middle', 'last']) {
+      const testName = `Mouse click ${side}/${position}: correct URL opens`;
+      const { id: hotspotId, urlContains } = hotspotData[position];
       
-      let popupOpened = false;
+      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
       
-      // Intercept popup/new tab
-      context.on('page', (newPage) => {
-        popupOpened = true;
-        newPage.close();
-      });
-      
-      await page.goto(baseUrl, { waitUntil: 'networkidle' });
-      
-      // Flip to reverse if needed
-      if (side === 'reverse') {
-        await page.click('#flip-button');
-        await page.waitForTimeout(1000);
-      }
-      
-      // Get first hotspot for this side
-      const hotspotSelector = side === 'front' 
-        ? '[data-hotspot-side="front"]' 
-        : '[data-hotspot-side="reverse"]';
-      
-      // Click the hotspot
-      await page.click(hotspotSelector);
-      await page.waitForTimeout(300);
-      
-      // Verify panel shows hotspot content
-      const panelHasLink = await page.$('.hotspot-link');
-      if (!panelHasLink) {
-        results.push({ test: testName, status: 'FAIL', reason: 'Panel link not found after hotspot click' });
-        console.log(`  ${testName}: ✗ FAIL (no link in panel)`);
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click the hotspot to pin it
+        const clicked = await clickHotspot(page, hotspotId);
+        if (!clicked) {
+          results.push({ test: testName, status: 'FAIL', reason: `Hotspot ${hotspotId} not found` });
+          console.log(`  ${testName}: ✗ FAIL (hotspot not found)`);
+          await context.close();
+          continue;
+        }
+        await page.waitForTimeout(200);
+        
+        // Click the panel link
+        const panelLink = await page.$('.hotspot-link');
+        if (!panelLink) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Panel link not found' });
+          console.log(`  ${testName}: ✗ FAIL (no panel link)`);
+          await context.close();
+          continue;
+        }
+        
+        await panelLink.click();
+        await page.waitForTimeout(300);
+        
+        const popupUrl = getLastPopupUrl();
+        if (!popupUrl) {
+          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+          console.log(`  ${testName}: ✗ FAIL (no popup)`);
+        } else if (!popupUrl.includes(urlContains)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
         await context.close();
-        continue;
       }
-      
-      // Click the link once
-      await page.click('.hotspot-link');
-      await page.waitForTimeout(500);
-      
-      if (popupOpened) {
-        results.push({ test: testName, status: 'PASS' });
-        console.log(`  ${testName}: ✓ PASS`);
-      } else {
-        results.push({ test: testName, status: 'FAIL', reason: 'Popup did not open on first click' });
-        console.log(`  ${testName}: ✗ FAIL (popup not opened)`);
-      }
-      
-      await context.close();
     }
     
-    // Test (b): Hover hotspot, move to blank area, then to panel link - panel should still show hotspot
-    {
-      const testName = `(b) ${side}: Panel is sticky on hover`;
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      const page = await context.newPage();
+    // =========================================================================
+    // Test 2: Keyboard - Tab to hotspot, Enter, Tab to link, Enter - verify URL
+    // =========================================================================
+    for (const position of ['first', 'middle', 'last']) {
+      const testName = `Keyboard ${side}/${position}: correct URL opens`;
+      const { id: hotspotId, urlContains } = hotspotData[position];
       
-      let popupOpened = false;
-      context.on('page', (newPage) => {
-        popupOpened = true;
-        newPage.close();
-      });
+      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
       
-      await page.goto(baseUrl, { waitUntil: 'networkidle' });
-      
-      if (side === 'reverse') {
-        await page.click('#flip-button');
-        await page.waitForTimeout(1000);
-      }
-      
-      const hotspotSelector = side === 'front' 
-        ? '[data-hotspot-side="front"]' 
-        : '[data-hotspot-side="reverse"]';
-      
-      // Hover over the hotspot
-      const hotspot = await page.$(hotspotSelector);
-      const hotspotBox = await hotspot.boundingBox();
-      
-      await page.mouse.move(hotspotBox.x + hotspotBox.width / 2, hotspotBox.y + hotspotBox.height / 2);
-      await page.waitForTimeout(300);
-      
-      // Verify panel shows hotspot content
-      const panelHasLinkBefore = await page.$('.hotspot-link');
-      if (!panelHasLinkBefore) {
-        results.push({ test: testName, status: 'FAIL', reason: 'Panel link not found after hover' });
-        console.log(`  ${testName}: ✗ FAIL (no link after hover)`);
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Tab to the specific hotspot
+        const foundHotspot = await tabToHotspot(page, hotspotId);
+        if (!foundHotspot) {
+          results.push({ test: testName, status: 'FAIL', reason: `Could not Tab to ${hotspotId}` });
+          console.log(`  ${testName}: ✗ FAIL (could not tab to hotspot)`);
+          await context.close();
+          continue;
+        }
+        
+        // Press Enter to pin and move focus to link
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(300);
+        
+        // Verify focus moved to link, try a few times if needed
+        let focusOnLink = await page.evaluate(() => 
+          document.activeElement?.classList.contains('hotspot-link')
+        );
+        
+        if (!focusOnLink) {
+          // Try Tab to get to link
+          for (let attempt = 0; attempt < 3 && !focusOnLink; attempt++) {
+            await page.keyboard.press('Tab');
+            await page.waitForTimeout(100);
+            focusOnLink = await page.evaluate(() => 
+              document.activeElement?.classList.contains('hotspot-link')
+            );
+          }
+        }
+        
+        // Verify panel shows correct hotspot before pressing Enter
+        const panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl || !panelUrl.includes(urlContains)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Panel shows wrong hotspot: ${panelUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (panel shows wrong hotspot)`);
+          await context.close();
+          continue;
+        }
+        
+        if (!focusOnLink) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Could not focus panel link' });
+          console.log(`  ${testName}: ✗ FAIL (could not focus link)`);
+          await context.close();
+          continue;
+        }
+        
+        // Press Enter to activate link
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(500);
+        
+        const popupUrl = getLastPopupUrl();
+        if (!popupUrl) {
+          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+          console.log(`  ${testName}: ✗ FAIL (no popup)`);
+        } else if (!popupUrl.includes(urlContains)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
         await context.close();
-        continue;
       }
-      
-      // Move mouse to a blank area (outside hotspot and panel)
-      await page.mouse.move(50, 50);
-      await page.waitForTimeout(300);
-      
-      // Panel should still show the hotspot (sticky behavior)
-      const panelHasLinkAfterBlank = await page.$('.hotspot-link');
-      if (!panelHasLinkAfterBlank) {
-        results.push({ test: testName, status: 'FAIL', reason: 'Panel reset to placeholder after moving to blank area' });
-        console.log(`  ${testName}: ✗ FAIL (panel reset on leave)`);
-        await context.close();
-        continue;
-      }
-      
-      // Move to panel link and click it
-      const panelLink = await page.$('.hotspot-link');
-      const linkBox = await panelLink.boundingBox();
-      
-      await page.mouse.move(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
-      await page.waitForTimeout(200);
-      await page.mouse.click(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
-      await page.waitForTimeout(500);
-      
-      if (popupOpened) {
-        results.push({ test: testName, status: 'PASS' });
-        console.log(`  ${testName}: ✓ PASS`);
-      } else {
-        results.push({ test: testName, status: 'FAIL', reason: 'Link click after hover did not open popup' });
-        console.log(`  ${testName}: ✗ FAIL (popup not opened)`);
-      }
-      
-      await context.close();
     }
     
-    // Test (c): Keyboard navigation - Tab to hotspot, Tab to panel link, Enter to open
+    // =========================================================================
+    // Test 3: Mouse pin A, sweep across B to panel, click link - A's URL opens
+    // =========================================================================
     {
-      const testName = `(c) ${side}: Keyboard navigation to panel link`;
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      const page = await context.newPage();
+      const testName = `Mouse sweep ${side}: pinned hotspot survives sweep`;
+      const { id: hotspotA, urlContains: urlA } = hotspotData.first;
+      const { id: hotspotB } = hotspotData.middle;
       
-      let popupOpened = false;
-      context.on('page', (newPage) => {
-        popupOpened = true;
-        newPage.close();
-      });
+      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
       
-      await page.goto(baseUrl, { waitUntil: 'networkidle' });
-      
-      if (side === 'reverse') {
-        await page.click('#flip-button');
-        await page.waitForTimeout(1000);
-      }
-      
-      // Tab through the page to find a hotspot for the current side
-      let foundHotspot = false;
-      for (let i = 0; i < 20; i++) {
-        await page.keyboard.press('Tab');
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Click hotspot A to pin it
+        const elA = await getHotspotElement(page, hotspotA);
+        const boxA = await elA.boundingBox();
+        await page.mouse.click(boxA.x + boxA.width / 2, boxA.y + boxA.height / 2);
+        await page.waitForTimeout(200);
+        
+        // Get hotspot B position
+        const elB = await getHotspotElement(page, hotspotB);
+        const boxB = await elB.boundingBox();
+        
+        // Get panel link position
+        const panelLink = await page.$('.hotspot-link');
+        const linkBox = await panelLink.boundingBox();
+        
+        // Sweep mouse: from A through B to the panel link
+        await page.mouse.move(boxA.x + boxA.width / 2, boxA.y + boxA.height / 2);
+        await page.waitForTimeout(50);
+        await page.mouse.move(boxB.x + boxB.width / 2, boxB.y + boxB.height / 2);
+        await page.waitForTimeout(50); // Quick sweep, less than hover-intent delay
+        await page.mouse.move(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
         await page.waitForTimeout(100);
         
-        const focusedOnHotspot = await page.evaluate((expectedSide) => {
-          const el = document.activeElement;
-          return el?.classList.contains('hotspot-polygon') && 
-                 el?.getAttribute('data-hotspot-side') === expectedSide;
-        }, side);
-        
-        if (focusedOnHotspot) {
-          foundHotspot = true;
-          break;
+        // Verify panel still shows hotspot A (not B)
+        const panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl || !panelUrl.includes(urlA)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Panel switched to wrong hotspot: ${panelUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (panel switched)`);
+          await context.close();
+          continue;
         }
-      }
-      
-      if (!foundHotspot) {
-        results.push({ test: testName, status: 'FAIL', reason: `Could not Tab to ${side} hotspot` });
-        console.log(`  ${testName}: ✗ FAIL (could not tab to hotspot)`);
+        
+        // Click the link
+        await page.mouse.click(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
+        await page.waitForTimeout(300);
+        
+        const popupUrl = getLastPopupUrl();
+        if (!popupUrl) {
+          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+          console.log(`  ${testName}: ✗ FAIL (no popup)`);
+        } else if (!popupUrl.includes(urlA)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL (expected A): ${popupUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
         await context.close();
-        continue;
       }
+    }
+    
+    // =========================================================================
+    // Test 4: Hover sticky behavior (no pin, just hover)
+    // =========================================================================
+    {
+      const testName = `Hover sticky ${side}: panel persists after leave`;
+      const { id: hotspotId, urlContains } = hotspotData.first;
       
-      // Press Enter to activate the hotspot
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(300);
+      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
       
-      // Check if panel has link
-      const panelHasLink = await page.$('.hotspot-link');
-      if (!panelHasLink) {
-        results.push({ test: testName, status: 'FAIL', reason: 'Panel link not found after Enter on hotspot' });
-        console.log(`  ${testName}: ✗ FAIL (no link after activating hotspot)`);
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Hover over hotspot (without clicking)
+        const hotspot = await getHotspotElement(page, hotspotId);
+        const hotspotBox = await hotspot.boundingBox();
+        
+        await page.mouse.move(hotspotBox.x + hotspotBox.width / 2, hotspotBox.y + hotspotBox.height / 2);
+        await page.waitForTimeout(200); // Wait for hover-intent delay
+        
+        // Move mouse to blank area
+        await page.mouse.move(50, 50);
+        await page.waitForTimeout(200);
+        
+        // Panel should still show the hotspot (sticky)
+        const panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl || !panelUrl.includes(urlContains)) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Panel did not persist' });
+          console.log(`  ${testName}: ✗ FAIL (panel reset)`);
+          await context.close();
+          continue;
+        }
+        
+        // Move to panel and click link
+        const panelLink = await page.$('.hotspot-link');
+        const linkBox = await panelLink.boundingBox();
+        await page.mouse.move(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
+        await page.waitForTimeout(100);
+        await page.mouse.click(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height / 2);
+        await page.waitForTimeout(300);
+        
+        const popupUrl = getLastPopupUrl();
+        if (!popupUrl) {
+          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+          console.log(`  ${testName}: ✗ FAIL (no popup)`);
+        } else if (!popupUrl.includes(urlContains)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
         await context.close();
-        continue;
       }
+    }
+    
+    // =========================================================================
+    // Test 5: Keyboard Tab through multiple hotspots - pinned one stays
+    // =========================================================================
+    {
+      const testName = `Keyboard tab-through ${side}: pinned survives tabbing`;
+      const { id: hotspotA, urlContains: urlA } = hotspotData.first;
       
-      // Tab to the panel link
-      let foundLink = false;
-      for (let i = 0; i < 15; i++) {
-        await page.keyboard.press('Tab');
+      const { context, page, getLastPopupUrl } = await setupPage(browser, baseUrl);
+      
+      try {
+        await page.goto(baseUrl, { waitUntil: 'networkidle' });
+        await flipToSide(page, side);
+        
+        // Tab to first hotspot and pin it
+        const foundHotspot = await tabToHotspot(page, hotspotA);
+        if (!foundHotspot) {
+          results.push({ test: testName, status: 'FAIL', reason: `Could not Tab to ${hotspotA}` });
+          console.log(`  ${testName}: ✗ FAIL (could not tab to first hotspot)`);
+          await context.close();
+          continue;
+        }
+        
+        // Press Enter to pin
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(200);
+        
+        // Focus should be on link now; Tab through more elements (will pass through other hotspots)
+        // We need to go backwards to re-enter the hotspot area
+        await page.keyboard.press('Escape'); // Return to hotspot
         await page.waitForTimeout(100);
         
-        const isOnLink = await page.evaluate(() => document.activeElement?.classList.contains('hotspot-link'));
-        if (isOnLink) {
-          foundLink = true;
-          break;
+        // Now Tab forward through remaining hotspots
+        for (let i = 0; i < 5; i++) {
+          await page.keyboard.press('Tab');
+          await page.waitForTimeout(50);
         }
-      }
-      
-      if (!foundLink) {
-        results.push({ test: testName, status: 'FAIL', reason: 'Could not Tab to panel link' });
-        console.log(`  ${testName}: ✗ FAIL (could not tab to link)`);
+        
+        // Panel should still show hotspot A (pinned)
+        const panelUrl = await getPanelLinkUrl(page);
+        if (!panelUrl || !panelUrl.includes(urlA)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Panel switched: ${panelUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (panel switched while tabbing)`);
+          await context.close();
+          continue;
+        }
+        
+        // Tab back to the link and press Enter
+        let foundLink = false;
+        for (let i = 0; i < 20; i++) {
+          await page.keyboard.press('Tab');
+          await page.waitForTimeout(50);
+          const isOnLink = await page.evaluate(() => 
+            document.activeElement?.classList.contains('hotspot-link')
+          );
+          if (isOnLink) {
+            foundLink = true;
+            break;
+          }
+        }
+        
+        if (!foundLink) {
+          // Try Shift+Tab
+          for (let i = 0; i < 20; i++) {
+            await page.keyboard.press('Shift+Tab');
+            await page.waitForTimeout(50);
+            const isOnLink = await page.evaluate(() => 
+              document.activeElement?.classList.contains('hotspot-link')
+            );
+            if (isOnLink) {
+              foundLink = true;
+              break;
+            }
+          }
+        }
+        
+        if (!foundLink) {
+          results.push({ test: testName, status: 'FAIL', reason: 'Could not find panel link' });
+          console.log(`  ${testName}: ✗ FAIL (could not find link)`);
+          await context.close();
+          continue;
+        }
+        
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(300);
+        
+        const popupUrl = getLastPopupUrl();
+        if (!popupUrl) {
+          results.push({ test: testName, status: 'FAIL', reason: 'No popup opened' });
+          console.log(`  ${testName}: ✗ FAIL (no popup)`);
+        } else if (!popupUrl.includes(urlA)) {
+          results.push({ test: testName, status: 'FAIL', reason: `Wrong URL: ${popupUrl}` });
+          console.log(`  ${testName}: ✗ FAIL (wrong URL)`);
+        } else {
+          results.push({ test: testName, status: 'PASS' });
+          console.log(`  ${testName}: ✓ PASS`);
+        }
+      } finally {
         await context.close();
-        continue;
       }
-      
-      // Press Enter to activate the link
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(500);
-      
-      if (popupOpened) {
-        results.push({ test: testName, status: 'PASS' });
-        console.log(`  ${testName}: ✓ PASS`);
-      } else {
-        results.push({ test: testName, status: 'FAIL', reason: 'Enter on focused link did not open popup' });
-        console.log(`  ${testName}: ✗ FAIL (popup not opened)`);
-      }
-      
-      await context.close();
     }
   }
   

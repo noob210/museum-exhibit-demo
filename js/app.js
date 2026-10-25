@@ -17,11 +17,17 @@
   const VIEWBOX_WIDTH = 807;
   const VIEWBOX_HEIGHT = 1024;
 
+  // Hover-intent delay before switching panel on hover (ms)
+  const HOVER_INTENT_DELAY = 120;
+
   // ===== STATE =====
   const state = {
     currentSide: 'front',
-    activeHotspot: null,      // Currently clicked/pinned hotspot
-    displayedHotspot: null,   // Currently shown in curator panel (sticky)
+    pinnedHotspot: null,       // Hotspot pinned by click/tap/Enter/Space
+    previewHotspot: null,      // Hotspot being previewed by hover/focus (not pinned)
+    displayedHotspot: null,    // Currently shown in curator panel
+    hoverIntentTimer: null,    // Timer for hover-intent delay
+    lastFocusedHotspotEl: null, // Element to return focus to on Escape from panel
     isFlipping: false,
     editMode: false,
     editPoints: [],
@@ -290,16 +296,16 @@
     polygon.setAttribute('aria-label', hotspot.title);
     
     // Event listeners
-    polygon.addEventListener('mouseenter', () => handleHotspotHover(hotspot));
+    polygon.addEventListener('mouseenter', () => handleHotspotHover(hotspot, false));
     polygon.addEventListener('mouseleave', (e) => handleHotspotLeave(e));
-    polygon.addEventListener('click', () => handleHotspotClick(hotspot));
+    polygon.addEventListener('click', () => handleHotspotClick(hotspot, false));
     polygon.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        handleHotspotClick(hotspot);
+        handleHotspotClick(hotspot, true);
       }
     });
-    polygon.addEventListener('focus', () => handleHotspotHover(hotspot));
+    polygon.addEventListener('focus', () => handleHotspotHover(hotspot, true));
     polygon.addEventListener('blur', (e) => handleHotspotLeave(e));
 
     return polygon;
@@ -333,59 +339,126 @@
   }
 
   // ===== HOTSPOT INTERACTIONS =====
-  function handleHotspotHover(hotspot) {
+  
+  // Hover/focus on a hotspot: show immediate visual highlight, delay panel update
+  function handleHotspotHover(hotspot, isKeyboardFocus = false) {
     if (state.isFlipping) return;
-    // Only respond if this hotspot is on the visible side
     if (hotspot.side !== state.currentSide) return;
     
-    // Update panel if showing a different hotspot (sticky behavior)
-    if (!state.displayedHotspot || state.displayedHotspot.id !== hotspot.id) {
-      state.displayedHotspot = hotspot;
-      updateCuratorPanel(hotspot);
+    // Always show visual highlight immediately
+    highlightHotspot(hotspot.id);
+    
+    // If this hotspot is already pinned or displayed, nothing more to do
+    if (state.pinnedHotspot && state.pinnedHotspot.id === hotspot.id) return;
+    if (state.displayedHotspot && state.displayedHotspot.id === hotspot.id) return;
+    
+    // Clear any pending hover-intent timer
+    if (state.hoverIntentTimer) {
+      clearTimeout(state.hoverIntentTimer);
+      state.hoverIntentTimer = null;
     }
     
-    // Update visual highlight
-    highlightHotspot(hotspot.id);
+    // For keyboard focus, update preview immediately (no delay)
+    // For mouse hover, use hover-intent delay
+    if (isKeyboardFocus) {
+      state.previewHotspot = hotspot;
+      // Only update panel if nothing is pinned
+      if (!state.pinnedHotspot) {
+        state.displayedHotspot = hotspot;
+        updateCuratorPanel(hotspot);
+      }
+    } else {
+      // Mouse hover: delay panel update to avoid sweep-through issues
+      state.hoverIntentTimer = setTimeout(() => {
+        state.hoverIntentTimer = null;
+        state.previewHotspot = hotspot;
+        // Only update panel if nothing is pinned
+        if (!state.pinnedHotspot) {
+          state.displayedHotspot = hotspot;
+          updateCuratorPanel(hotspot);
+        }
+      }, HOVER_INTENT_DELAY);
+    }
   }
 
+  // Mouse/focus leaving a hotspot
   function handleHotspotLeave(e) {
-    // Don't reset panel on leave - panel is sticky until a different hotspot is shown
-    // Only clear the visual highlight if there's no active (clicked) hotspot
-    // and the mouse/focus isn't moving into the curator panel
+    // Cancel any pending hover-intent
+    if (state.hoverIntentTimer) {
+      clearTimeout(state.hoverIntentTimer);
+      state.hoverIntentTimer = null;
+    }
     
     // Check if focus/mouse is moving into the curator panel
     const relatedTarget = e.relatedTarget;
     if (relatedTarget && curatorContent.contains(relatedTarget)) {
-      // Focus is moving into the panel, don't change anything
+      // Moving into panel - if we have a pinned hotspot, ensure panel shows it
+      if (state.pinnedHotspot && state.displayedHotspot?.id !== state.pinnedHotspot.id) {
+        state.displayedHotspot = state.pinnedHotspot;
+        updateCuratorPanel(state.pinnedHotspot);
+      }
+      state.previewHotspot = null;
       return;
     }
     
-    // Clear visual highlight but keep panel content (sticky)
-    // If there's an active hotspot, show its highlight
-    if (state.activeHotspot) {
-      highlightHotspot(state.activeHotspot.id);
+    // Clear preview state
+    state.previewHotspot = null;
+    
+    // Update visual highlight
+    if (state.pinnedHotspot) {
+      // Revert to pinned hotspot highlight and panel
+      highlightHotspot(state.pinnedHotspot.id);
+      if (state.displayedHotspot?.id !== state.pinnedHotspot.id) {
+        state.displayedHotspot = state.pinnedHotspot;
+        updateCuratorPanel(state.pinnedHotspot);
+      }
     } else {
+      // No pinned hotspot - keep panel sticky, just clear highlight
       clearHighlights();
     }
   }
 
-  function handleHotspotClick(hotspot) {
+  // Click/tap/Enter/Space on a hotspot: PIN it and move focus to panel
+  function handleHotspotClick(hotspot, fromKeyboard = false) {
     if (state.isFlipping) return;
-    // Only respond if this hotspot is on the visible side
     if (hotspot.side !== state.currentSide) return;
     
-    // Toggle active state
-    if (state.activeHotspot && state.activeHotspot.id === hotspot.id) {
-      // Clicking same hotspot again - unpin it
-      state.activeHotspot = null;
-      // Keep displaying this hotspot (sticky) but remove active highlight
+    // Cancel any pending hover-intent
+    if (state.hoverIntentTimer) {
+      clearTimeout(state.hoverIntentTimer);
+      state.hoverIntentTimer = null;
+    }
+    
+    // Remember which element to return focus to
+    const hotspotEl = document.querySelector(`[data-hotspot-id="${hotspot.id}"]`);
+    state.lastFocusedHotspotEl = hotspotEl;
+    
+    // Toggle pin if clicking same hotspot again
+    if (state.pinnedHotspot && state.pinnedHotspot.id === hotspot.id) {
+      // Unpin - but keep it displayed (sticky)
+      state.pinnedHotspot = null;
+      state.previewHotspot = null;
+      // Keep displaying but remove "pinned" visual state
       clearHighlights();
-    } else {
-      // Pin this hotspot
-      state.activeHotspot = hotspot;
-      state.displayedHotspot = hotspot;
-      updateCuratorPanel(hotspot);
-      highlightHotspot(hotspot.id);
+      return;
+    }
+    
+    // Pin this hotspot
+    state.pinnedHotspot = hotspot;
+    state.previewHotspot = null;
+    state.displayedHotspot = hotspot;
+    updateCuratorPanel(hotspot);
+    highlightHotspot(hotspot.id);
+    
+    // For keyboard activation, move focus into the panel
+    if (fromKeyboard) {
+      // Focus the link after a short delay to let the panel render
+      setTimeout(() => {
+        const panelLink = curatorContent.querySelector('.hotspot-link');
+        if (panelLink) {
+          panelLink.focus();
+        }
+      }, 50);
     }
   }
 
@@ -404,9 +477,16 @@
   }
   
   function resetPanel() {
+    // Cancel any pending hover-intent
+    if (state.hoverIntentTimer) {
+      clearTimeout(state.hoverIntentTimer);
+      state.hoverIntentTimer = null;
+    }
     // Reset panel to placeholder and clear state
-    state.activeHotspot = null;
+    state.pinnedHotspot = null;
+    state.previewHotspot = null;
     state.displayedHotspot = null;
+    state.lastFocusedHotspotEl = null;
     showPlaceholder();
     clearHighlights();
   }
@@ -504,9 +584,19 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         if (state.modalOpen) {
+          // Modal takes priority
           closeModal();
+        } else if (curatorContent.contains(document.activeElement)) {
+          // Focus is in panel - return focus to the hotspot
+          e.preventDefault();
+          if (state.lastFocusedHotspotEl) {
+            state.lastFocusedHotspotEl.focus();
+          } else if (state.pinnedHotspot) {
+            const el = document.querySelector(`[data-hotspot-id="${state.pinnedHotspot.id}"]`);
+            if (el) el.focus();
+          }
         } else if (state.displayedHotspot) {
-          // Reset panel when Escape is pressed
+          // Second Escape or Escape from hotspot - reset panel
           resetPanel();
         }
       }
