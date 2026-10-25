@@ -20,7 +20,8 @@
   // ===== STATE =====
   const state = {
     currentSide: 'front',
-    activeHotspot: null,
+    activeHotspot: null,      // Currently clicked/pinned hotspot
+    displayedHotspot: null,   // Currently shown in curator panel (sticky)
     isFlipping: false,
     editMode: false,
     editPoints: [],
@@ -290,7 +291,7 @@
     
     // Event listeners
     polygon.addEventListener('mouseenter', () => handleHotspotHover(hotspot));
-    polygon.addEventListener('mouseleave', handleHotspotLeave);
+    polygon.addEventListener('mouseleave', (e) => handleHotspotLeave(e));
     polygon.addEventListener('click', () => handleHotspotClick(hotspot));
     polygon.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -299,7 +300,7 @@
       }
     });
     polygon.addEventListener('focus', () => handleHotspotHover(hotspot));
-    polygon.addEventListener('blur', handleHotspotLeave);
+    polygon.addEventListener('blur', (e) => handleHotspotLeave(e));
 
     return polygon;
   }
@@ -336,17 +337,34 @@
     if (state.isFlipping) return;
     // Only respond if this hotspot is on the visible side
     if (hotspot.side !== state.currentSide) return;
-    updateCuratorPanel(hotspot);
+    
+    // Update panel if showing a different hotspot (sticky behavior)
+    if (!state.displayedHotspot || state.displayedHotspot.id !== hotspot.id) {
+      state.displayedHotspot = hotspot;
+      updateCuratorPanel(hotspot);
+    }
+    
+    // Update visual highlight
     highlightHotspot(hotspot.id);
   }
 
-  function handleHotspotLeave() {
+  function handleHotspotLeave(e) {
+    // Don't reset panel on leave - panel is sticky until a different hotspot is shown
+    // Only clear the visual highlight if there's no active (clicked) hotspot
+    // and the mouse/focus isn't moving into the curator panel
+    
+    // Check if focus/mouse is moving into the curator panel
+    const relatedTarget = e.relatedTarget;
+    if (relatedTarget && curatorContent.contains(relatedTarget)) {
+      // Focus is moving into the panel, don't change anything
+      return;
+    }
+    
+    // Clear visual highlight but keep panel content (sticky)
+    // If there's an active hotspot, show its highlight
     if (state.activeHotspot) {
-      // Keep showing active hotspot info
-      updateCuratorPanel(state.activeHotspot);
       highlightHotspot(state.activeHotspot.id);
     } else {
-      showPlaceholder();
       clearHighlights();
     }
   }
@@ -358,17 +376,20 @@
     
     // Toggle active state
     if (state.activeHotspot && state.activeHotspot.id === hotspot.id) {
+      // Clicking same hotspot again - unpin it
       state.activeHotspot = null;
-      showPlaceholder();
+      // Keep displaying this hotspot (sticky) but remove active highlight
       clearHighlights();
     } else {
+      // Pin this hotspot
       state.activeHotspot = hotspot;
+      state.displayedHotspot = hotspot;
       updateCuratorPanel(hotspot);
-      highlightHotspot(hotspot.id, true);
+      highlightHotspot(hotspot.id);
     }
   }
 
-  function highlightHotspot(id, isActive = false) {
+  function highlightHotspot(id) {
     clearHighlights();
     const polygon = document.querySelector(`[data-hotspot-id="${id}"]`);
     if (polygon) {
@@ -380,6 +401,14 @@
     document.querySelectorAll('.hotspot-polygon.active').forEach(p => {
       p.classList.remove('active');
     });
+  }
+  
+  function resetPanel() {
+    // Reset panel to placeholder and clear state
+    state.activeHotspot = null;
+    state.displayedHotspot = null;
+    showPlaceholder();
+    clearHighlights();
   }
 
   // ===== CURATOR PANEL =====
@@ -427,9 +456,8 @@
     if (state.isFlipping) return;
     
     state.isFlipping = true;
-    state.activeHotspot = null;
-    clearHighlights();
-    showPlaceholder();
+    // Reset panel state on flip
+    resetPanel();
 
     // Toggle flip state
     const isFlipped = cardInner.classList.toggle('flipped');
@@ -474,8 +502,13 @@
 
     // Close on Escape key
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && state.modalOpen) {
-        closeModal();
+      if (e.key === 'Escape') {
+        if (state.modalOpen) {
+          closeModal();
+        } else if (state.displayedHotspot) {
+          // Reset panel when Escape is pressed
+          resetPanel();
+        }
       }
     });
 
